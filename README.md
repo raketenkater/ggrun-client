@@ -9,7 +9,7 @@ CLI; it does not replace the coding harness or include Claude binaries.
 **Development status:** protocol v1 alpha, [v0.1.0-alpha.1](https://github.com/raketenkater/ggrun-client/releases/tag/v0.1.0-alpha.1). Not yet qualified on a real laptop. The initial Claude CLI target is **2.1.307**. Linux and Windows
 contract tests and portable builds are separate from real GPU/laptop acceptance.
 Clients target macOS, Linux and Windows; headless servers target Linux and
-macOS. Native macOS client and installer CI is being qualified; real-device
+macOS. Native macOS ARM64 tests and published-alpha installation passed; real-device
 Claude terminal acceptance remains separate on every client OS.
 
 ## Install
@@ -87,7 +87,7 @@ new prefill. The connector never stops or remotely controls the model process.
 | Claude CLI | 2.1.307 | same-host coding/resume/foreground worker passed; laptop pending |
 | Linux client | amd64, arm64 | native tests on amd64; portable builds |
 | Windows client | amd64, arm64 | native tests and released install passed; real terminal pending |
-| macOS client | arm64, amd64 | portable builds; native and alpha install CI added, receipts pending |
+| macOS client | arm64, amd64 | portable builds; native ARM64 and alpha install passed; Intel cross-built only |
 
 The server candidate must include the role-compatibility fix from ggrun
 `b061f6b` or later: some templates silently omit mid-conversation system
