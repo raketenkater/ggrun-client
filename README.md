@@ -6,28 +6,28 @@ computer. The server owns inference and scheduling. Your laptop owns files,
 tools, MCPs, memories and sessions. The connector launches your installed Claude
 CLI; it does not replace the coding harness or include Claude binaries.
 
-**Development status:** protocol v1 implementation, not yet released or qualified
-on a real laptop. The initial Claude CLI target is **2.1.307**. Linux and Windows
+**Development status:** protocol v1 alpha, [v0.1.0-alpha.1](https://github.com/raketenkater/ggrun-client/releases/tag/v0.1.0-alpha.1). Not yet qualified on a real laptop. The initial Claude CLI target is **2.1.307**. Linux and Windows
 contract tests and portable builds are separate from real GPU/laptop acceptance.
 macOS is cross-built only until live evidence is available.
 
 ## Install
 
-After the first release is published, install a checksummed binary without Go:
+Install the checksum-verified alpha binary without Go:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/raketenkater/ggrun-client/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/raketenkater/ggrun-client/v0.1.0-alpha.1/install.sh | GGRUN_CLIENT_VERSION=v0.1.0-alpha.1 sh
 ```
 
 On Windows PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/raketenkater/ggrun-client/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/raketenkater/ggrun-client/v0.1.0-alpha.1/install.ps1 -OutFile install-ggrun-client.ps1
+./install-ggrun-client.ps1 -Version v0.1.0-alpha.1
 ```
 
 Install [Claude Code](https://code.claude.com/docs/en/setup) separately. The
 server requires a matching remote-enabled ggrun build. See the upstream
-[server setup](https://github.com/raketenkater/ggrun/blob/main/docs/remote-claude.md).
+[server setup](https://github.com/raketenkater/ggrun/blob/feat/remote-claude-client/docs/remote-claude.md).
 
 ## Use
 
@@ -84,7 +84,7 @@ new prefill. The connector never stops or remotely controls the model process.
 | ggrun connection / policy | 1 / 1 | shared typed package and fixtures |
 | Claude CLI | 2.1.307 | same-host coding/resume/foreground worker passed; laptop pending |
 | Linux client | amd64, arm64 | native tests on amd64; portable builds |
-| Windows client | amd64, arm64 | native CI passed on amd64; real terminal pending |
+| Windows client | amd64, arm64 | native tests and released install passed; real terminal pending |
 | macOS client | arm64, amd64 | cross-build only |
 
 The server candidate must include the role-compatibility fix from ggrun
@@ -100,7 +100,7 @@ background processes are outside the first milestone. Exact token counting is
 not advertised by protocol v1's initial server implementation.
 
 The public contract is maintained in ggrun's
-[clientkit](https://github.com/raketenkater/ggrun/tree/main/clientkit).
+[clientkit](https://github.com/raketenkater/ggrun/tree/feat/remote-claude-client/clientkit).
 The client pins the exact server feature commit in go.mod. Local development
 replacements are forbidden by the release gate. Run `go test -race
 ./...`, `go vet ./...` and `go test github.com/raketenkater/ggrun/clientkit`.
