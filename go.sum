@@ -1,0 +1,6 @@
+github.com/charmbracelet/x/term v0.2.2 h1:xVRT/S2ZcKdhhOuSP4t5cLi5o+JxklsoEObBSgfgZRk=
+github.com/charmbracelet/x/term v0.2.2/go.mod h1:kF8CY5RddLWrsgVwpw4kAa6TESp6EB5y3uxGLeCqzAI=
+github.com/raketenkater/ggrun/clientkit v0.0.0-20261027120216-e3b47b991081 h1:GvWainXPzDdbyxOBtkv56cAzUYfSAygeQyIlqBmtmiA=
+github.com/raketenkater/ggrun/clientkit v0.0.0-20261027120216-e3b47b991081/go.mod h1:dsZ3BHx4EZ37+GEgfCUHwVUm9NdHW/zimdY916yCT2U=
+golang.org/x/sys v0.38.0 h1:3yZWxaJjBmCWXqhN1qh02AkOnCQ1poK6oF+a7xWL6Gc=
+golang.org/x/sys v0.38.0/go.mod h1:OgkHotnGiDImocRcuBABYBEXf8A9a87e/uXjp9XT3ks=

@@ -1,0 +1,56 @@
+name: Client CI
+on:
+  push:
+  pull_request:
+  workflow_call:
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Connection, credentials, working directory, resume and disconnect
+        run: go test -race -count=1 ./...
+      - name: Pinned server policy conformance
+        run: go test -count=1 github.com/raketenkater/ggrun/clientkit
+      - name: Vet
+        run: go vet ./...
+      - name: Build installed entrypoint
+        run: go build -o dist/ ./cmd/ggrun-client
+      - name: Run installed entrypoint outside checkout
+        shell: bash
+        run: |
+          binary="$GITHUB_WORKSPACE/dist/ggrun-client"
+          if [ "${RUNNER_OS}" = Windows ]; then binary="${binary}.exe"; fi
+          cd "$RUNNER_TEMP"
+          "$binary" version
+          "$binary" --help
+  portable:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - {os: linux, arch: amd64}
+          - {os: linux, arch: arm64}
+          - {os: windows, arch: amd64}
+          - {os: windows, arch: arm64}
+          - {os: darwin, arch: arm64}
+          - {os: darwin, arch: amd64}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Cross-build
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+        run: go build -o dist/client ./cmd/ggrun-client

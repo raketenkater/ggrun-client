@@ -95,8 +95,8 @@ not advertised by protocol v1's initial server implementation.
 
 The public contract is maintained in ggrun's
 [clientkit](https://github.com/raketenkater/ggrun/tree/main/clientkit).
-The client must pin a reviewed package version/commit before publication; the
-local development `replace` must be removed before release. Run `go test -race
+The client pins the exact server feature commit in go.mod. Local development
+replacements are forbidden by the release gate. Run `go test -race
 ./...`, `go vet ./...` and `go test github.com/raketenkater/ggrun/clientkit`.
 CI exercises the actual child launch with a native fixture executable and no
 Tailscale or model download. It does not substitute for a real laptop coding task.
