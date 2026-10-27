@@ -9,7 +9,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-14]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -55,3 +55,31 @@ jobs:
           GOOS: ${{ matrix.os }}
           GOARCH: ${{ matrix.arch }}
         run: go build -o dist/client ./cmd/ggrun-client
+  released-installer-smoke:
+    # Pin an existing artifact to test installer changes on PRs. The release
+    # workflow separately verifies the newly published tag on every platform.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    env:
+      GGRUN_CLIENT_VERSION: v0.1.0-alpha.1
+      GGRUN_CLIENT_INSTALL_DIR: ${{ runner.temp }}/client-install
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install published Unix artifact
+        if: runner.os != 'Windows'
+        run: |
+          sh install.sh
+          test "$("$GGRUN_CLIENT_INSTALL_DIR/ggrun-client" version)" = "$GGRUN_CLIENT_VERSION"
+          "$GGRUN_CLIENT_INSTALL_DIR/ggrun-client" --help
+      - name: Install published Windows artifact
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./install.ps1 -Version $env:GGRUN_CLIENT_VERSION -InstallDir $env:GGRUN_CLIENT_INSTALL_DIR -NoPath
+          if ($LASTEXITCODE -ne 0) { throw 'Install failed' }
+          $binary = Join-Path $env:GGRUN_CLIENT_INSTALL_DIR 'ggrun-client.exe'
+          if ((& $binary version) -ne $env:GGRUN_CLIENT_VERSION) { throw 'Wrong installed version' }
+          & $binary --help

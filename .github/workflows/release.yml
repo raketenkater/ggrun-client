@@ -48,12 +48,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-14]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
-      - name: Install published Linux binary with checksum validation
-        if: runner.os == 'Linux'
+      - name: Install published Unix binary with checksum validation
+        if: runner.os != 'Windows'
         env:
           GGRUN_CLIENT_VERSION: ${{ github.ref_name }}
           GGRUN_CLIENT_INSTALL_DIR: ${{ runner.temp }}/client-install
