@@ -65,16 +65,19 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       GGRUN_CLIENT_VERSION: v0.1.0-alpha.1
-      GGRUN_CLIENT_INSTALL_DIR: ${{ runner.temp }}/client-install
     steps:
       - uses: actions/checkout@v7
       - name: Install published Unix artifact
+        env:
+          GGRUN_CLIENT_INSTALL_DIR: ${{ runner.temp }}/client-install
         if: runner.os != 'Windows'
         run: |
           sh install.sh
           test "$("$GGRUN_CLIENT_INSTALL_DIR/ggrun-client" version)" = "$GGRUN_CLIENT_VERSION"
           "$GGRUN_CLIENT_INSTALL_DIR/ggrun-client" --help
       - name: Install published Windows artifact
+        env:
+          GGRUN_CLIENT_INSTALL_DIR: ${{ runner.temp }}/client-install
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
