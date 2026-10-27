@@ -205,6 +205,7 @@ func TestMain(m *testing.M) {
 		if err := os.WriteFile(os.Getenv("GGRUN_CLIENT_TEST_RECEIPT"), b, 0600); err != nil {
 			os.Exit(7)
 		}
+		io.WriteString(os.Stdout, "{\"type\":\"result\",\"subtype\":\"success\"}\n")
 		os.Exit(0)
 	}
 	os.Exit(m.Run())
@@ -238,9 +239,31 @@ func TestLaunchRunsToolsOnClientAndScopesEnvironment(t *testing.T) {
 	for _, k := range []string{"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"} {
 		t.Setenv(k, "")
 	}
-	if err = launch([]string{"--", "-p", "test"}); err != nil {
-		t.Fatal(err)
+	runJSON := func(args []string) {
+		t.Helper()
+		original := os.Stdout
+		r, w, pipeErr := os.Pipe()
+		if pipeErr != nil {
+			t.Fatal(pipeErr)
+		}
+		os.Stdout = w
+		launchErr := launch(args)
+		w.Close()
+		os.Stdout = original
+		data, readErr := io.ReadAll(r)
+		r.Close()
+		if launchErr != nil {
+			t.Fatal(launchErr)
+		}
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		var result map[string]any
+		if json.Unmarshal(data, &result) != nil || result["type"] != "result" {
+			t.Fatalf("wrapper corrupted child JSON stdout: %q", data)
+		}
 	}
+	runJSON([]string{"--", "-p", "test"})
 	b, err = os.ReadFile(receipt)
 	if err != nil {
 		t.Fatal(err)
@@ -263,9 +286,7 @@ func TestLaunchRunsToolsOnClientAndScopesEnvironment(t *testing.T) {
 	if os.Getenv("ANTHROPIC_API_KEY") != "do-not-forward" {
 		t.Fatal("parent environment mutated")
 	}
-	if err = launch([]string{"--resume", "--", "-p", "continue"}); err != nil {
-		t.Fatal(err)
-	}
+	runJSON([]string{"--resume", "--", "-p", "continue"})
 	if _, err = inspect(connection{URL: s.URL + "/prefix", Token: testToken}); err != nil {
 		t.Fatal("client exit stopped server")
 	}

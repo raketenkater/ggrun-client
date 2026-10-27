@@ -38,7 +38,11 @@ jobs:
       - name: Publish client artifacts
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes
+        shell: bash
+        run: |
+          release_args=("$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes)
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then release_args+=(--prerelease); fi
+          gh release create "${release_args[@]}"
   released-install:
     needs: release
     strategy:

@@ -211,7 +211,7 @@ func launch(args []string) error {
 	}
 	if o.resuming {
 		childArgs = append([]string{"--resume", s.ID}, childArgs...)
-		fmt.Println("Resuming laptop session. The server may need to prefill again after a restart.")
+		fmt.Fprintln(os.Stderr, "Resuming laptop session. The server may need to prefill again after a restart.")
 	} else {
 		childArgs = append([]string{"--session-id", s.ID}, childArgs...)
 	}
