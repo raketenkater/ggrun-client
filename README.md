@@ -82,10 +82,16 @@ new prefill. The connector never stops or remotely controls the model process.
 | Contract | Target | Qualification |
 |---|---|---|
 | ggrun connection / policy | 1 / 1 | shared typed package and fixtures |
-| Claude CLI | 2.1.307 | initial target; live qualification pending |
+| Claude CLI | 2.1.307 | same-host coding/resume/foreground worker passed; laptop pending |
 | Linux client | amd64, arm64 | native tests on amd64; portable builds |
-| Windows client | amd64, arm64 | native CI required on amd64; portable builds |
+| Windows client | amd64, arm64 | native CI passed on amd64; real terminal pending |
 | macOS client | arm64, amd64 | cross-build only |
+
+The server candidate must include the role-compatibility fix from ggrun
+`b061f6b` or later: some templates silently omit mid-conversation system
+messages carrying worker reports. The bridge rejects those roles so the
+qualified Claude version retries with the report in user content. Earlier
+feature drafts are not qualified for worker handoff.
 
 Other Claude versions require explicit `--allow-untested-claude` on the `claude`
 command. This permits a manual compatibility test and is not a compatibility
