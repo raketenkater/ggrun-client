@@ -79,18 +79,20 @@ func settingsConflict(c connection, p clientkit.Profile, args []string) error {
 			return fmt.Errorf("cannot validate Claude settings JSON in %s", source)
 		}
 		for k, v := range document.Env {
+			// Windows environment names are case-insensitive, including env
+			// blocks Claude applies after inheriting our scoped environment.
+			if runtime.GOOS == "windows" {
+				k = strings.ToUpper(k)
+			}
 			if k == "CLAUDE_CODE_SUBAGENT_MODEL" && p.ClientAlias(v) {
 				continue
 			}
-			if v == "" {
-				continue
-			}
 			for _, provider := range cloudProviders {
-				if k == provider && v != "0" && !strings.EqualFold(v, "false") {
+				if k == provider && v != "" && v != "0" && !strings.EqualFold(v, "false") {
 					return fmt.Errorf("%s in %s selects a cloud transport; choose a ggrun-compatible Claude configuration for this session", k, source)
 				}
 			}
-			if k == "ANTHROPIC_API_KEY" {
+			if k == "ANTHROPIC_API_KEY" && v != "" {
 				return fmt.Errorf("ANTHROPIC_API_KEY in %s overrides the gateway credential; remove that setting from the Claude configuration used for this connection", source)
 			}
 			if want, ok := expected[k]; ok && want != v {

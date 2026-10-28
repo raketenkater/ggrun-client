@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## v0.1.0-alpha.2 — 2026-10-28
+
+- Reject saved empty connection overrides and case variants on Windows before
+  Claude can clear the verified gateway URL, credential or model/context binding.
+- Reject raw resume/continue aliases, compact short options containing them, and
+  session forks that bypass the connector verified-session metadata.
 
 - Native Apple Silicon macOS contract tests and published alpha installer checks,
   alongside Linux and Windows. Intel Mac remains cross-built only.

@@ -200,8 +200,13 @@ func launch(args []string) error {
 	// Prevent CLI overrides from invalidating model/context/session assumptions.
 	for _, a := range o.args {
 		k, _, _ := strings.Cut(a, "=")
+		// Compact short options can hide resume/continue, such as -rID or
+		// -vrc. Require their separate forms so the connector owns the session.
+		if len(k) > 2 && strings.HasPrefix(k, "-") && !strings.HasPrefix(k, "--") && strings.ContainsAny(k[1:], "rc") {
+			return fmt.Errorf("compact short option %q can override the verified session; use separate flags and the client's --resume option", k)
+		}
 		switch k {
-		case "--model", "--fallback-model", "--session-id", "--resume", "--continue", "-c":
+		case "--model", "--fallback-model", "--session-id", "--resume", "-r", "--continue", "-c", "--fork-session":
 			return fmt.Errorf("%s conflicts with the verified connection/session; use the client's --resume option", k)
 		}
 	}

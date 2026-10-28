@@ -286,6 +286,19 @@ func TestLaunchRunsToolsOnClientAndScopesEnvironment(t *testing.T) {
 	if os.Getenv("ANTHROPIC_API_KEY") != "do-not-forward" {
 		t.Fatal("parent environment mutated")
 	}
+	for _, forbidden := range [][]string{
+		{"-r", "unverified-session"}, {"-r=unverified-session"},
+		{"-runverified-session"}, {"-vrc"}, {"--fork-session"},
+	} {
+		args := append([]string{"--resume", "--"}, forbidden...)
+		if err := launch(args); err == nil {
+			t.Fatalf("session override reached the child: %v", forbidden)
+		}
+		after, err := os.ReadFile(receipt)
+		if err != nil || string(after) != string(b) {
+			t.Fatalf("rejected session override launched a child: %v", forbidden)
+		}
+	}
 	runJSON([]string{"--resume", "--", "-p", "continue"})
 	if _, err = inspect(connection{URL: s.URL + "/prefix", Token: testToken}); err != nil {
 		t.Fatal("client exit stopped server")
