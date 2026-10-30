@@ -70,9 +70,23 @@ MCPs, permission choices and custom status lines. Conflicting saved connection
 settings are diagnosed. With explicit custom `--settings`, configure the
 `ggrun-client workflow-hook` PreToolUse hook for Workflow yourself. Web research
 can use your search MCP or the optional DuckDuckGo MCP when `uvx` is installed
-locally. Auto permission mode follows ggrun's default; use an explicit Claude
-`--permission-mode` or `GGRUN_CLAUDE_PERMISSION_MODE=inherit` to retain another
+locally. With a separate worker advertised, permission mode defaults to Auto.
+Without one, it defaults to normal permission prompts: main-model safety checks
+can exceed Claude's separate classifier deadline, even with a long API timeout.
+Normal prompts also apply conservatively to review-only companions not advertised
+as workers. Use an explicit Claude `--permission-mode` (including `auto`) or
+`GGRUN_CLAUDE_PERMISSION_MODE=inherit` to retain another
 choice.
+
+If an existing session reports that Auto mode cannot determine a tool's safety
+because the model timed out, exit and resume it with normal permission prompts:
+
+```sh
+ggrun-client claude --connection server --resume -- --permission-mode default
+```
+
+This preserves the conversation and normal tool approval rules. It does not
+require a model restart or a separate reviewer. It also works with alpha.2.
 
 Client exit and disconnection leave the server model loaded. Interrupted tool
 generations are not automatically replayed. Resume checks model/backend identity
