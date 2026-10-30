@@ -6,28 +6,30 @@ computer. The server owns inference and scheduling. Your laptop owns files,
 tools, MCPs, memories and sessions. The connector launches your installed Claude
 CLI; it does not replace the coding harness or include Claude binaries.
 
-**Development status:** protocol v1 implementation, not yet released or qualified
-on a real laptop. The initial Claude CLI target is **2.1.307**. Linux and Windows
+**Development status:** protocol v1 alpha, [v0.1.0-alpha.2](https://github.com/raketenkater/ggrun-client/releases/tag/v0.1.0-alpha.2). Not yet qualified on a real laptop. The initial Claude CLI target is **2.1.307**. Linux and Windows
 contract tests and portable builds are separate from real GPU/laptop acceptance.
-macOS is cross-built only until live evidence is available.
+Clients target macOS, Linux and Windows; headless servers target Linux and
+macOS. Native macOS ARM64 tests and published-alpha installation passed; real-device
+Claude terminal acceptance remains separate on every client OS.
 
 ## Install
 
-After the first release is published, install a checksummed binary without Go:
+Install the checksum-verified alpha binary without Go:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/raketenkater/ggrun-client/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/raketenkater/ggrun-client/v0.1.0-alpha.2/install.sh | GGRUN_CLIENT_VERSION=v0.1.0-alpha.2 sh
 ```
 
 On Windows PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/raketenkater/ggrun-client/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/raketenkater/ggrun-client/v0.1.0-alpha.2/install.ps1 -OutFile install-ggrun-client.ps1
+./install-ggrun-client.ps1 -Version v0.1.0-alpha.2
 ```
 
 Install [Claude Code](https://code.claude.com/docs/en/setup) separately. The
 server requires a matching remote-enabled ggrun build. See the upstream
-[server setup](https://github.com/raketenkater/ggrun/blob/main/docs/remote-claude.md).
+[server setup](https://github.com/raketenkater/ggrun/blob/feat/remote-claude-client/docs/remote-claude.md).
 
 ## Use
 
@@ -68,9 +70,23 @@ MCPs, permission choices and custom status lines. Conflicting saved connection
 settings are diagnosed. With explicit custom `--settings`, configure the
 `ggrun-client workflow-hook` PreToolUse hook for Workflow yourself. Web research
 can use your search MCP or the optional DuckDuckGo MCP when `uvx` is installed
-locally. Auto permission mode follows ggrun's default; use an explicit Claude
-`--permission-mode` or `GGRUN_CLAUDE_PERMISSION_MODE=inherit` to retain another
+locally. With a separate worker advertised, permission mode defaults to Auto.
+Without one, it defaults to normal permission prompts: main-model safety checks
+can exceed Claude's separate classifier deadline, even with a long API timeout.
+Normal prompts also apply conservatively to review-only companions not advertised
+as workers. Use an explicit Claude `--permission-mode` (including `auto`) or
+`GGRUN_CLAUDE_PERMISSION_MODE=inherit` to retain another
 choice.
+
+If an existing session reports that Auto mode cannot determine a tool's safety
+because the model timed out, exit and resume it with normal permission prompts:
+
+```sh
+ggrun-client claude --connection server --resume -- --permission-mode default
+```
+
+This preserves the conversation and normal tool approval rules. It does not
+require a model restart or a separate reviewer. It also works with alpha.2.
 
 Client exit and disconnection leave the server model loaded. Interrupted tool
 generations are not automatically replayed. Resume checks model/backend identity
@@ -82,10 +98,16 @@ new prefill. The connector never stops or remotely controls the model process.
 | Contract | Target | Qualification |
 |---|---|---|
 | ggrun connection / policy | 1 / 1 | shared typed package and fixtures |
-| Claude CLI | 2.1.307 | initial target; live qualification pending |
+| Claude CLI | 2.1.307 | same-host coding/resume/foreground worker passed; laptop pending |
 | Linux client | amd64, arm64 | native tests on amd64; portable builds |
-| Windows client | amd64, arm64 | native CI required on amd64; portable builds |
-| macOS client | arm64, amd64 | cross-build only |
+| Windows client | amd64, arm64 | native tests and released install passed; real terminal pending |
+| macOS client | arm64, amd64 | portable builds; native ARM64 and alpha install passed; Intel cross-built only |
+
+The server candidate must include the role-compatibility fix from ggrun
+`b061f6b` or later: some templates silently omit mid-conversation system
+messages carrying worker reports. The bridge rejects those roles so the
+qualified Claude version retries with the report in user content. Earlier
+feature drafts are not qualified for worker handoff.
 
 Other Claude versions require explicit `--allow-untested-claude` on the `claude`
 command. This permits a manual compatibility test and is not a compatibility
@@ -94,9 +116,9 @@ background processes are outside the first milestone. Exact token counting is
 not advertised by protocol v1's initial server implementation.
 
 The public contract is maintained in ggrun's
-[clientkit](https://github.com/raketenkater/ggrun/tree/main/clientkit).
-The client must pin a reviewed package version/commit before publication; the
-local development `replace` must be removed before release. Run `go test -race
+[clientkit](https://github.com/raketenkater/ggrun/tree/feat/remote-claude-client/clientkit).
+The client pins the exact server feature commit in go.mod. Local development
+replacements are forbidden by the release gate. Run `go test -race
 ./...`, `go vet ./...` and `go test github.com/raketenkater/ggrun/clientkit`.
 CI exercises the actual child launch with a native fixture executable and no
 Tailscale or model download. It does not substitute for a real laptop coding task.
