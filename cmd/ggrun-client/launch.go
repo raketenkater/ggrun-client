@@ -41,7 +41,7 @@ func claudeExecutable(allowUntested bool) (string, string, error) {
 		return "", "", fmt.Errorf("cannot read Claude Code version")
 	}
 	v := regexp.MustCompile(`\b[0-9]+\.[0-9]+\.[0-9]+\b`).FindString(string(b))
-	if v != targetClaudeVersion && !allowUntested {
+	if v != targetClaudeVersion && v != "2.1.316" && !allowUntested {
 		return "", v, fmt.Errorf("Claude Code %s is outside this client's initial target %s; use --allow-untested-claude only after reviewing compatibility", v, targetClaudeVersion)
 	}
 	return path, v, nil
@@ -66,10 +66,13 @@ type launchOptions struct {
 	name, resume            string
 	resuming, allowUntested bool
 	args                    []string
+	localControls           bool
+	controlTimeout          time.Duration
+	goalFile                string
 }
 
 func launchOptionsFor(args []string) (launchOptions, error) {
-	o := launchOptions{name: "default"}
+	o := launchOptions{name: "default", controlTimeout: 10 * time.Minute}
 	for i := 0; i < len(args); i++ {
 		switch a := args[i]; a {
 		case "--":
@@ -83,6 +86,24 @@ func launchOptionsFor(args []string) (launchOptions, error) {
 			o.name = args[i]
 		case "--allow-untested-claude":
 			o.allowUntested = true
+		case "--local-controls":
+			o.localControls = true
+		case "--goal-file":
+			i++
+			if i == len(args) {
+				return o, fmt.Errorf("--goal-file requires a path on this client computer")
+			}
+			o.goalFile = args[i]
+		case "--control-timeout":
+			i++
+			if i == len(args) {
+				return o, fmt.Errorf("--control-timeout requires a duration")
+			}
+			var err error
+			o.controlTimeout, err = time.ParseDuration(args[i])
+			if err != nil {
+				return o, err
+			}
 		case "--resume":
 			o.resuming = true
 			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
@@ -100,6 +121,7 @@ type session struct {
 	ID, ModelID string
 	Context     int
 	Version     int
+	Controls    bool `json:"controls,omitempty"`
 }
 
 func sessionPath(name string) (string, error) {
@@ -166,6 +188,9 @@ func launch(args []string) error {
 	if err != nil {
 		return err
 	}
+	if o.goalFile != "" && !o.localControls {
+		return fmt.Errorf("--goal-file requires --local-controls")
+	}
 	if err = transportConflict(); err != nil {
 		return err
 	}
@@ -183,6 +208,9 @@ func launch(args []string) error {
 	path, v, err := claudeExecutable(o.allowUntested)
 	if err != nil {
 		return err
+	}
+	if o.localControls && v != "2.1.316" {
+		return fmt.Errorf("local controls require qualified Claude Code 2.1.316; install it with claude install 2.1.316")
 	}
 	sessionFile, err := sessionPath(o.name)
 	if err != nil {
@@ -214,11 +242,24 @@ func launch(args []string) error {
 	if err != nil {
 		return err
 	}
+	if o.localControls {
+		childArgs, err = controlArgs(childArgs, o.name, o.controlTimeout)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(os.Stderr, "[ggrun-client] Main-model control review enabled. Use ggrun-client goal set --file GOAL.md for persistent goals; native /goal retains its short deadline.")
+	}
 	if o.resuming {
 		childArgs = append([]string{"--resume", s.ID}, childArgs...)
 		fmt.Fprintln(os.Stderr, "Resuming laptop session. The server may need to prefill again after a restart.")
 	} else {
 		childArgs = append([]string{"--session-id", s.ID}, childArgs...)
+	}
+	s.Controls = o.localControls
+	if o.goalFile != "" {
+		if err = setGoalForSession(o.name, s, o.goalFile); err != nil {
+			return err
+		}
 	}
 	fmt.Fprintf(os.Stderr, "[ggrun-client] %s · %d tokens/slot · Claude %s · tools/files in current directory\n", p.ModelName, p.ContextPerSlot, v)
 	cmd := exec.Command(path, childArgs...)

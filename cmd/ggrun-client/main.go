@@ -59,6 +59,20 @@ func run(args []string) error {
 		return launch(args[1:])
 	case "workflow-hook":
 		return workflowHook(os.Stdin, os.Stdout)
+	case "goal":
+		return goalCommand(args[1:])
+	case "control-hook":
+		fs := flag.NewFlagSet("control-hook", flag.ContinueOnError)
+		name := fs.String("connection", "default", "saved connection")
+		timeout := fs.Duration("timeout", 10*time.Minute, "control budget")
+		state := fs.String("goal-state", "", "private goal state path")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if fs.NArg() != 0 {
+			return fmt.Errorf("unexpected control-hook arguments")
+		}
+		return localControlHook(*name, *timeout, *state, os.Stdin, os.Stdout)
 	case "experimental-review-hook":
 		fs := flag.NewFlagSet("experimental-review-hook", flag.ContinueOnError)
 		name := fs.String("name", "default", "saved connection")
@@ -83,7 +97,9 @@ func usage() {
 
   ggrun-client connect URL [--name default] [--allow-http] [--token-stdin]
   ggrun-client doctor [--name default]
-  ggrun-client claude [--connection default] [--resume [SESSION_ID]] [-- CLAUDE_ARGS...]
+  ggrun-client claude [--connection default] [--resume [SESSION_ID]] [--local-controls] [-- CLAUDE_ARGS...]
+  ggrun-client goal set --connection default --file GOAL.md
+  ggrun-client goal status|resume|clear --connection default
   ggrun-client forget [--name default]
 
 Run claude from your laptop project directory. Files, tools and sessions stay

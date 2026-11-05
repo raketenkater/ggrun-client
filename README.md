@@ -121,3 +121,49 @@ replacements are forbidden by the release gate. Run `go test -race
 ./...`, `go vet ./...` and `go test github.com/raketenkater/ggrun/clientkit`.
 CI exercises the actual child launch with a native fixture executable and no
 Tailscale or model download. It does not substitute for a real laptop coding task.
+# Main-model controls (alpha.4)
+
+For a backend-only server and Claude Code on another computer, install alpha.4
+on the **client computer**. This mode uses the main model for reviews, without a
+second model or native Auto's short classifier deadline. Requires Claude Code
+2.1.316. It remains an opt-in deployment mode; other native versions and all
+model/hardware combinations are not qualified by this deployment's tests.
+
+```sh
+claude install 2.1.316
+ggrun-client connect https://YOUR-SERVER --name server
+ggrun-client claude --connection server --local-controls --control-timeout 30m
+```
+
+Run the client in your working project. Tools, files, hooks and goal state stay
+on that computer. The backend serves the model API only. Existing verified
+sessions can add `--resume`. Explicit non-Auto modes require omitting
+`--local-controls`; changing mode inside Claude returns permission decisions to
+native policy. Existing deny/ask rules remain effective.
+
+For an autonomous goal, write its completion condition to `GOAL.md`, then:
+
+```sh
+ggrun-client claude --connection server --local-controls --control-timeout 30m --goal-file GOAL.md
+```
+
+Tell Claude to read GOAL.md and start. This is the client's persistent goal
+controller, **not native `/goal`**, whose short deadline is unchanged. From
+another terminal in the same project:
+
+```sh
+ggrun-client goal status --connection server
+ggrun-client goal clear --connection server
+ggrun-client goal resume --connection server
+ggrun-client goal set --connection server --file GOAL.md
+```
+
+An unmet verdict continues work; a complete verdict records completion. An
+evaluator error pauses the goal without claiming success. Clear/replacement
+cancels an in-flight check. Resume preserves the condition and verified session.
+Native Stop continuation caps still apply when the agent repeatedly makes no
+tool progress; the saved goal is not marked complete when that cap stops a turn.
+Long-context checks can take several minutes. Review quality still depends on
+the selected model. Custom input-rewriting hooks and large workflows require
+their own workload qualification; a simple live task is not proof of every
+workflow. No user settings files are overwritten.
