@@ -45,6 +45,8 @@ type reviewInput struct {
 	Transcript    string          `json:"transcript_path"`
 	LastAssistant string          `json:"last_assistant_message,omitempty"`
 	Mode          string          `json:"permission_mode,omitempty"`
+	Prompt        string          `json:"prompt,omitempty"`
+	Background    json.RawMessage `json:"background_tasks,omitempty"`
 }
 
 type reviewVerdict struct {
@@ -69,21 +71,80 @@ func readReviewEvidence(input reviewInput) ([]byte, error) {
 		return nil, fmt.Errorf("cannot open native transcript")
 	}
 	defer f.Close()
-	b, err := io.ReadAll(io.LimitReader(f, (32<<20)+1))
-	if err != nil || len(b) > 32<<20 {
-		return nil, fmt.Errorf("transcript exceeds review evidence limit; compact the session before retrying")
+	// The file is append-only history; only the live part after the last
+	// compact boundary is sent, so the raw cap is for runaway files only.
+	b, err := io.ReadAll(io.LimitReader(f, (1<<30)+1))
+	if err != nil || len(b) > 1<<30 {
+		return nil, fmt.Errorf("native transcript exceeds 1 GiB; start a new session")
 	}
 	if len(bytes.TrimSpace(b)) == 0 {
 		return nil, fmt.Errorf("native transcript is empty; authorization cannot be verified")
 	}
-	for _, line := range bytes.Split(bytes.TrimSpace(b), []byte("\n")) {
-		if !json.Valid(line) {
-			return nil, errTranscriptPending
+	lines := bytes.Split(bytes.TrimSpace(b), []byte("\n"))
+	// Only a partial final line means a write is in progress. A corrupt line
+	// deep in old history must not block every later review.
+	if !json.Valid(lines[len(lines)-1]) {
+		return nil, errTranscriptPending
+	}
+	return json.Marshal(map[string]any{"proposed_action": input, "native_transcript_jsonl": liveTranscript(lines)})
+}
+
+// liveTranscript returns the part of the append-only native transcript that is
+// the model's live context: entries from the last compact boundary (including
+// a recorded preserved segment) onward. Request-body copies and bookkeeping
+// keys are dropped; every other field (messages, attachments such as queued
+// human prompts and instructions, origins) is kept verbatim.
+func liveTranscript(lines [][]byte) string {
+	type entry struct {
+		Type     string `json:"type"`
+		Subtype  string `json:"subtype"`
+		UUID     string `json:"uuid"`
+		Metadata struct {
+			Preserved struct {
+				Head string `json:"headUuid"`
+			} `json:"preservedSegment"`
+		} `json:"compactMetadata"`
+	}
+	start := 0
+	for i := len(lines) - 1; i >= 0; i-- {
+		var e entry
+		if json.Unmarshal(lines[i], &e) == nil && e.Type == "system" && e.Subtype == "compact_boundary" {
+			start = i
+			if head := e.Metadata.Preserved.Head; head != "" {
+				for j := i - 1; j >= 0; j-- {
+					var h entry
+					if json.Unmarshal(lines[j], &h) == nil && h.UUID == head {
+						start = j
+						break
+					}
+				}
+			}
+			break
 		}
 	}
-	// Keep the complete source: compact-boundary selection must be qualified
-	// separately before old evidence can be dropped safely.
-	return json.Marshal(map[string]any{"proposed_action": input, "native_transcript_jsonl": string(b)})
+	var out strings.Builder
+	for _, line := range lines[start:] {
+		var full map[string]json.RawMessage
+		if json.Unmarshal(line, &full) != nil {
+			continue
+		}
+		var kind string
+		_ = json.Unmarshal(full["type"], &kind)
+		if strings.HasPrefix(kind, "api-request") {
+			continue
+		}
+		for _, k := range []string{"parentUuid", "logicalParentUuid", "uuid", "timestamp", "cwd", "version", "sessionId",
+			"gitBranch", "requestId", "userType", "slug", "entrypoint", "promptId", "toolUseResult"} {
+			delete(full, k) // toolUseResult duplicates the tool_result content block.
+		}
+		b, err := json.Marshal(full)
+		if err != nil {
+			continue
+		}
+		out.Write(b)
+		out.WriteByte('\n')
+	}
+	return out.String()
 }
 
 func evaluateReview(ctx context.Context, c connection, evidence []byte) (reviewVerdict, error) {
@@ -92,6 +153,10 @@ func evaluateReview(ctx context.Context, c connection, evidence []byte) (reviewV
 
 func evaluateControl(ctx context.Context, c connection, evidence []byte, policy string) (reviewVerdict, error) {
 	var verdict reviewVerdict
+	// Rough token estimate; the backend still rejects a real overflow.
+	if c.Profile.ContextPerSlot > 0 && len(evidence)/4+len(policy)/4+4096 > c.Profile.ContextPerSlot {
+		return verdict, fmt.Errorf("control evidence (~%d tokens) exceeds the %d-token model context; run /compact and retry", len(evidence)/4, c.Profile.ContextPerSlot)
+	}
 	body, err := json.Marshal(map[string]any{
 		"model": c.Profile.MainAlias, "max_tokens": 2048, "stream": false,
 		"thinking": map[string]string{"type": "disabled"},
@@ -228,6 +293,13 @@ func mainReviewHook(name string, timeout time.Duration, in io.Reader, out io.Wri
 	if json.Unmarshal(b, &input) != nil {
 		return fmt.Errorf("invalid review event")
 	}
+	if input.Mode == "" {
+		return fmt.Errorf("native review event omitted its permission mode")
+	}
+	if input.Mode != "auto" {
+		_, err = io.WriteString(out, "{}\n")
+		return err // Outside Auto, native policy decides; never broaden it.
+	}
 	evidence, err := waitReviewEvidence(ctx, input)
 	if err != nil {
 		return err
@@ -251,6 +323,8 @@ func mainReviewHook(name string, timeout time.Duration, in io.Reader, out io.Wri
 	if err != nil {
 		return err
 	}
+	// Known limit: Claude records mode changes in the transcript only at exit or
+	// resume, so leaving Auto during an in-flight review cannot be detected here.
 	return json.NewEncoder(out).Encode(map[string]any{"hookSpecificOutput": map[string]any{
 		"hookEventName": "PreToolUse", "permissionDecision": verdict.Decision, "permissionDecisionReason": verdict.Reason,
 	}})

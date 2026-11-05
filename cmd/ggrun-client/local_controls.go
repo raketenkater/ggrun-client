@@ -205,6 +205,9 @@ func localControlHook(name string, timeout time.Duration, statePath string, in i
 	if json.Unmarshal(b, &input) != nil {
 		return fmt.Errorf("invalid control event")
 	}
+	if input.Event == "UserPromptSubmit" {
+		return goalPromptHook(name, statePath, input, out)
+	}
 	if input.Mode == "" {
 		return fmt.Errorf("native control event omitted its permission mode")
 	}
@@ -251,8 +254,8 @@ func localControlHook(name string, timeout time.Duration, statePath string, in i
 	if json.Unmarshal(result.Bytes(), &reply) != nil {
 		return fmt.Errorf("invalid internal review result")
 	}
-	if changed {
-		reply["hookSpecificOutput"]["updatedInput"] = json.RawMessage(input.Input)
+	if h := reply["hookSpecificOutput"]; changed && h != nil {
+		h["updatedInput"] = json.RawMessage(input.Input)
 	}
 	return json.NewEncoder(out).Encode(reply)
 }
@@ -323,10 +326,15 @@ func localGoalHook(name string, timeout time.Duration, path string, input review
 		}
 	}
 	current := false
+	replaced := ""
 	update := withGoalLock(path, func() error {
 		n, err := readGoal(path)
 		if err != nil {
 			return err
+		}
+		if n.Revision != g.Revision && n.State == "active" && n.Session == input.Session {
+			replaced = n.Condition // Set/resume during the check: keep working on it.
+			return nil
 		}
 		if n.Revision != g.Revision || n.State != "active" {
 			return nil
@@ -351,6 +359,9 @@ func localGoalHook(name string, timeout time.Duration, path string, input review
 	if update != nil {
 		return update
 	}
+	if replaced != "" {
+		return json.NewEncoder(out).Encode(map[string]string{"decision": "block", "reason": "User-configured goal was updated: " + replaced + "\nContinue working toward it."})
+	}
 	if !current {
 		_, e = io.WriteString(out, "{}\n")
 		return e
@@ -362,9 +373,161 @@ func localGoalHook(name string, timeout time.Duration, path string, input review
 		return json.NewEncoder(out).Encode(map[string]string{"decision": "block", "reason": "User-configured goal: " + g.Condition + "\nGoal is not complete: " + verdict.Reason})
 	}
 	if verdict.Decision == "ask" {
-		fmt.Fprintln(os.Stderr, "[ggrun-client] Goal paused:", verdict.Reason)
+		return json.NewEncoder(out).Encode(map[string]any{"systemMessage": "[ggrun-client] Goal paused: " + verdict.Reason + " (/ggoal resume to continue)"})
+	}
+	if verdict.Decision == "allow" {
+		return json.NewEncoder(out).Encode(map[string]any{"systemMessage": "[ggrun-client] Goal complete: " + verdict.Reason})
 	}
 	return json.NewEncoder(out).Encode(map[string]any{})
+}
+
+// The /ggoal skill only gives the command a name; the UserPromptSubmit hook
+// sees the raw prompt and records the goal in Go, never through a shell.
+const ggoalSkill = `---
+name: ggoal
+description: Set, check, resume or clear the ggrun-client persistent goal (checked by the main model, no 30-second deadline)
+argument-hint: "[condition | status | resume | clear]"
+disable-model-invocation: true
+---
+The ggrun-client goal controller has already handled this /ggoal command; its
+result is in the UserPromptSubmit hook context. If a goal is active, work toward
+its condition now and keep going until it is fully satisfied, proving it with
+real tool results. After each turn the main model checks the condition and the
+session continues while it is unmet. Do not edit ggrun-client goal state yourself.
+`
+
+func goalPromptHook(name, statePath string, input reviewInput, out io.Writer) error {
+	text := strings.TrimSpace(input.Prompt)
+	rest, matched := "", false
+	for _, prefix := range []string{"/ggrun:ggoal", "/ggoal"} {
+		if text == prefix || (strings.HasPrefix(text, prefix) && strings.ContainsAny(text[len(prefix):len(prefix)+1], " \t\r\n")) {
+			rest, matched = strings.TrimSpace(text[len(prefix):]), true
+			break
+		}
+	}
+	if !matched {
+		_, e := io.WriteString(out, "{}\n")
+		return e
+	}
+	if statePath == "" || input.Session == "" {
+		return fmt.Errorf("goal command has no verified session state")
+	}
+	block := func(msg string) error {
+		return json.NewEncoder(out).Encode(map[string]string{"decision": "block", "reason": msg})
+	}
+	note := ""
+	if input.Mode != "" && input.Mode != "auto" {
+		note = "\nGoal checks run only in Auto mode; switch back to Auto for them to run."
+	}
+	cmd := strings.ToLower(rest)
+	switch cmd {
+	case "", "status":
+		g, e := readGoal(statePath)
+		if os.IsNotExist(e) {
+			return block("No ggrun goal is set. Use /ggoal <condition>.")
+		}
+		if e != nil {
+			return e
+		}
+		msg := "ggrun goal " + g.State + ": " + g.Condition
+		if g.Reason != "" {
+			msg += "\nLast check: " + g.Reason
+		}
+		if g.Session != input.Session {
+			msg += "\nIt belongs to an earlier conversation; /ggoal resume moves it here."
+		}
+		return block(msg + note)
+	case "clear", "resume":
+		var g goalRecord
+		e := withGoalLock(statePath, func() error {
+			var err error
+			if g, err = readGoal(statePath); err != nil {
+				return err
+			}
+			if cmd == "clear" {
+				g.State = "cleared"
+			} else {
+				g.State, g.Session = "active", input.Session
+			}
+			g.Reason, g.Revision = "", fmt.Sprint(time.Now().UnixNano())
+			return writeGoal(statePath, g)
+		})
+		if os.IsNotExist(e) {
+			return block("No ggrun goal is set. Use /ggoal <condition>.")
+		}
+		if e != nil {
+			return e
+		}
+		if g.State == "cleared" {
+			return block("ggrun goal cleared.")
+		}
+		return json.NewEncoder(out).Encode(map[string]any{"hookSpecificOutput": map[string]string{"hookEventName": "UserPromptSubmit",
+			"additionalContext": "ggrun-client resumed this goal (active): " + g.Condition + "\nContinue working toward it." + note}})
+	}
+	if len(rest) > 16384 {
+		return block("Goal condition must be at most 16384 bytes.")
+	}
+	raw, e := clientkit.ReadPrivate(strings.TrimSuffix(statePath, ".goal"))
+	var s session
+	if e != nil || json.Unmarshal(raw, &s) != nil || s.ModelID == "" || !s.Controls {
+		return block("No verified --local-controls session for this project; restart with ggrun-client claude --local-controls.")
+	}
+	if e = withGoalLock(statePath, func() error {
+		return writeGoal(statePath, goalRecord{Version: 1, Session: input.Session, Model: s.ModelID, Condition: rest, State: "active", Revision: fmt.Sprint(time.Now().UnixNano())})
+	}); e != nil {
+		return e
+	}
+	return json.NewEncoder(out).Encode(map[string]any{"hookSpecificOutput": map[string]string{"hookEventName": "UserPromptSubmit",
+		"additionalContext": "ggrun-client recorded this goal (active): " + rest + "\nAfter each turn the main model checks it and the session continues until it is satisfied. /ggoal status shows progress; /ggoal clear stops it." + note}})
+}
+
+func writeLaunchSettings(base string, b []byte) (string, error) {
+	dir := filepath.Dir(base)
+	if e := os.MkdirAll(dir, 0700); e != nil {
+		return "", e
+	}
+	prefix := filepath.Base(base) + ".settings-"
+	if old, _ := filepath.Glob(filepath.Join(dir, prefix+"*.json")); len(old) > 0 {
+		for _, f := range old {
+			if info, err := os.Lstat(f); err == nil && time.Since(info.ModTime()) > 7*24*time.Hour {
+				os.Remove(f)
+			}
+		}
+	}
+	f, e := os.CreateTemp(dir, prefix+"*.json") // 0600, O_EXCL
+	if e != nil {
+		return "", e
+	}
+	if _, e = f.Write(b); e == nil {
+		e = f.Sync()
+	}
+	if err := f.Close(); e == nil {
+		e = err
+	}
+	if e != nil {
+		os.Remove(f.Name())
+		return "", e
+	}
+	return f.Name(), nil
+}
+
+// writeControlPlugin provides the /ggoal command for this session only, in
+// the client's private state directory; user plugin and settings files are untouched.
+func writeControlPlugin(dir string) error {
+	files := map[string]string{
+		filepath.Join(".claude-plugin", "plugin.json"): `{"name":"ggrun","version":"1.0.0","description":"ggrun-client goal command"}` + "\n",
+		filepath.Join("skills", "ggoal", "SKILL.md"):   ggoalSkill,
+	}
+	for rel, content := range files {
+		path := filepath.Join(dir, rel)
+		if e := os.MkdirAll(filepath.Dir(path), 0700); e != nil {
+			return e
+		}
+		if e := os.WriteFile(path, []byte(content), 0600); e != nil {
+			return e
+		}
+	}
+	return nil
 }
 
 func controlArgs(args []string, name string, timeout time.Duration) ([]string, error) {
@@ -437,7 +600,7 @@ func controlArgs(args []string, name string, timeout time.Duration) ([]string, e
 	if runtime.GOOS == "windows" {
 		hook["shell"] = "powershell"
 	}
-	for _, event := range []string{"PreToolUse", "Stop"} {
+	for _, event := range []string{"PreToolUse", "Stop", "UserPromptSubmit"} {
 		rows := []any{}
 		if v, ok := hooks[event]; ok {
 			var valid bool
@@ -475,14 +638,28 @@ func controlArgs(args []string, name string, timeout time.Duration) ([]string, e
 	if e != nil {
 		return nil, e
 	}
+	// Merged settings can include a user's settings-file secrets; keep them in
+	// a private file, never in the child's command line.
+	// Plain JSON, mode 0600, one file per launch so concurrent launches in one
+	// project cannot swap policies. (clientkit private files are DPAPI-wrapped
+	// on Windows and unreadable to Claude.)
+	base := strings.TrimSuffix(statePath, ".goal")
+	settingsPath, e := writeLaunchSettings(base, b)
+	if e != nil {
+		return nil, e
+	}
 	if index >= 0 {
 		if inline {
-			args[index] = "--settings=" + string(b)
+			args[index] = "--settings=" + settingsPath
 		} else {
-			args[index] = string(b)
+			args[index] = settingsPath
 		}
 	} else {
-		args = append([]string{"--settings", string(b)}, args...)
+		args = append([]string{"--settings", settingsPath}, args...)
 	}
-	return args, nil
+	pluginDir := base + ".plugin"
+	if e = writeControlPlugin(pluginDir); e != nil {
+		return nil, e
+	}
+	return append([]string{"--plugin-dir", pluginDir}, args...), nil
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -161,7 +162,7 @@ func TestReviewEvidenceIsCompleteAndRequired(t *testing.T) {
 		Transcript string      `json:"native_transcript_jsonl"`
 		Action     reviewInput `json:"proposed_action"`
 	}
-	if json.Unmarshal(b, &envelope) != nil || envelope.Transcript != text || string(envelope.Action.Input) != string(in.Input) {
+	if json.Unmarshal(b, &envelope) != nil || envelope.Transcript != `{"message":{"role":"user","content":"Run tests"},"type":"user"}`+"\n" || string(envelope.Action.Input) != string(in.Input) {
 		t.Fatal("evidence altered")
 	}
 	in.Transcript = ""
@@ -174,5 +175,68 @@ func TestReviewEvidenceIsCompleteAndRequired(t *testing.T) {
 	}
 	if _, err := readReviewEvidence(in); err != errTranscriptPending {
 		t.Fatal("partial native journal accepted")
+	}
+}
+
+// Evidence is the live context: entries after the last compact boundary (plus
+// its preserved segment), without request-body copies; message content is verbatim.
+func TestReviewEvidenceStartsAtLastCompactBoundary(t *testing.T) {
+	lines := []string{
+		`{"type":"user","uuid":"u1","message":{"role":"user","content":"OLD_TASK"}}`,
+		`{"type":"user","uuid":"u2","message":{"role":"user","content":"PRESERVED_TASK"}}`,
+		`{"type":"system","subtype":"compact_boundary","uuid":"b1","compactMetadata":{"preservedSegment":{"headUuid":"u2"}}}`,
+		`{"type":"api-request-blob","uuid":"r1","body":"HUGE_COPY"}`,
+		`{"type":"user","uuid":"u3","isCompactSummary":true,"sessionId":"s","message":{"role":"user","content":"SUMMARY"}}`,
+		`{"type":"permission-mode","permissionMode":"auto"}`,
+	}
+	got := liveTranscript(func() (r [][]byte) {
+		for _, l := range lines {
+			r = append(r, []byte(l))
+		}
+		return
+	}())
+	for _, want := range []string{"PRESERVED_TASK", "compact_boundary", "SUMMARY", `"isCompactSummary":true`, `"permissionMode":"auto"`} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("live evidence lost %s:\n%s", want, got)
+		}
+	}
+	for _, gone := range []string{"OLD_TASK", "HUGE_COPY", "sessionId"} {
+		if strings.Contains(got, gone) {
+			t.Fatalf("live evidence kept %s:\n%s", gone, got)
+		}
+	}
+	// Without a boundary nothing is dropped.
+	if all := liveTranscript([][]byte{[]byte(lines[0])}); !strings.Contains(all, "OLD_TASK") {
+		t.Fatal("uncompacted history dropped")
+	}
+}
+
+func TestReviewHookDefersOutsideAutoAndAfterModeSwitch(t *testing.T) {
+	for _, mode := range []string{"default", "acceptEdits", "dontAsk", "plan"} {
+		var out bytes.Buffer
+		in := `{"hook_event_name":"PreToolUse","session_id":"s","tool_name":"Bash","tool_input":{"command":"x"},"cwd":"/","transcript_path":"/nonexistent","permission_mode":"` + mode + `"}`
+		if err := mainReviewHook("fixture", time.Minute, strings.NewReader(in), &out); err != nil || strings.TrimSpace(out.String()) != "{}" {
+			t.Fatalf("%s: review hook did not defer: %q %v", mode, out.String(), err)
+		}
+	}
+	if err := mainReviewHook("fixture", time.Minute, strings.NewReader(`{"hook_event_name":"PreToolUse"}`), &bytes.Buffer{}); err == nil {
+		t.Fatal("missing mode accepted")
+	}
+}
+
+// Queued human prompts and instruction attachments are authorization-relevant
+// and must reach the reviewer; a corrupt old line must not block reviews.
+func TestReviewEvidenceKeepsAttachmentsAndToleratesOldCorruption(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "transcript.jsonl")
+	text := `{"type":"user","message":{"role":"user","content":"Run tests"}}` + "\n" + `{"type":"user","mess` + "\n" +
+		`{"type":"attachment","uuid":"a","attachment":{"type":"queued_command","prompt":"STOP_DO_NOT_PUSH","origin":{"kind":"human"}}}` + "\n"
+	os.WriteFile(p, []byte(text), 0600)
+	in := reviewInput{Event: "PreToolUse", Session: "s", Tool: "Bash", Input: json.RawMessage(`{"command":"git push"}`), CWD: t.TempDir(), Transcript: p}
+	b, err := readReviewEvidence(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "STOP_DO_NOT_PUSH") || !strings.Contains(string(b), "human") {
+		t.Fatal("queued human prompt dropped from evidence")
 	}
 }

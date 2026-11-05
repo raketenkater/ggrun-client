@@ -264,6 +264,11 @@ func launch(args []string) error {
 	fmt.Fprintf(os.Stderr, "[ggrun-client] %s · %d tokens/slot · Claude %s · tools/files in current directory\n", p.ModelName, p.ContextPerSlot, v)
 	cmd := exec.Command(path, childArgs...)
 	cmd.Env = p.Environment(c.URL, c.Token, os.Environ())
+	if o.localControls {
+		// Local controls are qualified on one Claude release; an in-session
+		// auto-update would make the next launch refuse to start.
+		cmd.Env = append(cmd.Env, "DISABLE_AUTOUPDATER=1")
+	}
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
