@@ -6,8 +6,9 @@ import (
 )
 
 // A long general API timeout does not extend native Claude's classifier
-// deadline. Never silently select self-classification for an unqualified lane.
-func TestPermissionDefaultFollowsAdvertisedWorker(t *testing.T) {
+// deadline. Auto remains the product default even without a companion; the
+// reviewer route must be qualified independently, never replaced by approvals.
+func TestPermissionDefaultsToAutoWithAndWithoutWorker(t *testing.T) {
 	home(t)
 	t.Setenv("GGRUN_CLAUDE_PERMISSION_MODE", "")
 	for _, worker := range []bool{false, true} {
@@ -17,10 +18,7 @@ func TestPermissionDefaultFollowsAdvertisedWorker(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := "default"
-		if worker {
-			want = "auto"
-		}
+		want := "auto"
 		joined := "\n" + strings.Join(args, "\n") + "\n"
 		if !strings.Contains(joined, "\n--permission-mode\n"+want+"\n") {
 			t.Fatalf("separate worker %t: wanted %q, got %v", worker, want, args)
@@ -34,6 +32,7 @@ func TestPermissionOverridesRemainAuthoritativeWithoutWorker(t *testing.T) {
 		name, env, want string
 		extra           []string
 	}{
+		{"explicit manual", "auto", "default", []string{"--permission-mode", "default"}},
 		{"explicit auto", "", "auto", []string{"--permission-mode", "auto"}},
 		{"inline explicit", "auto", "plan", []string{"--permission-mode=plan"}},
 		{"environment", "auto", "auto", nil},

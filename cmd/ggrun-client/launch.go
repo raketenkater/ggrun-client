@@ -260,11 +260,9 @@ func clientArgs(extra []string, name string, p clientkit.Profile) ([]string, err
 	if !hasFlag(extra, "--permission-mode") {
 		mode := os.Getenv("GGRUN_CLAUDE_PERMISSION_MODE")
 		if mode == "" {
-			mode = "default"
-			if p.SeparateWorker {
-				mode = "auto"
-			} else {
-				fmt.Fprintln(os.Stderr, "[ggrun-client] using normal permission prompts: no separate worker is advertised, and main-model Auto checks can exceed Claude's classifier deadline. Explicit --permission-mode choices are preserved.")
+			mode = "auto"
+			if !p.SeparateWorker {
+				fmt.Fprintln(os.Stderr, "[ggrun-client] Auto mode: reviews use the main model; long review prompts can exceed Claude's classifier deadline without a fast reviewer.")
 			}
 		}
 		if mode != "inherit" {
