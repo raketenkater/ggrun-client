@@ -59,6 +59,17 @@ func run(args []string) error {
 		return launch(args[1:])
 	case "workflow-hook":
 		return workflowHook(os.Stdin, os.Stdout)
+	case "experimental-review-hook":
+		fs := flag.NewFlagSet("experimental-review-hook", flag.ContinueOnError)
+		name := fs.String("name", "default", "saved connection")
+		timeout := fs.Duration("timeout", 10*time.Minute, "main-model review budget; outer native hook timeout must be longer")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if fs.NArg() != 0 {
+			return fmt.Errorf("unexpected review-hook arguments")
+		}
+		return mainReviewHook(*name, *timeout, os.Stdin, os.Stdout)
 	case "status":
 		return status(args[1:])
 	case "forget":
