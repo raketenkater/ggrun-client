@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.1.0-alpha.7 — 2026-11-06
+
+- Goal checks: one failed check keeps the goal active and continues work; it
+  pauses only after 3 failures in a row (#6). A goal lock left by a killed
+  hook is reclaimed after 30 s (#7).
+- Reviews retry once after a lost connection and report `max_tokens`
+  distinctly (#8).
+
 ## v0.1.0-alpha.6 — 2026-11-06
 
 - Loopback relay with HTTP/2 PING and TCP keepalive: a dead server path fails

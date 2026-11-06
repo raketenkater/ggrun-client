@@ -175,14 +175,66 @@ func TestGoalRequiresActualEvaluatorBeforeCompleting(t *testing.T) {
 }
 
 func TestGoalFailurePausesInsteadOfCompleting(t *testing.T) {
-	path, input := goalFixture(t, func(w http.ResponseWriter, r *http.Request) { http.Error(w, "unavailable", 503) })
+	var fail atomic.Bool
+	fail.Store(true)
+	path, input := goalFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		if fail.Load() {
+			http.Error(w, "unavailable", 503)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"stop_reason": "tool_use", "content": []any{map[string]any{"type": "tool_use", "name": "submit_review", "input": map[string]string{"decision": "deny", "reason": "not yet"}}}})
+	})
+	// One failed check keeps the agent working and re-checks at the next stop.
 	var out bytes.Buffer
-	if e := localGoalHook("fixture", time.Second, path, input, &out); e == nil {
-		t.Fatal("failure hidden")
+	if e := localGoalHook("fixture", time.Second, path, input, &out); e != nil {
+		t.Fatalf("transient failure ended the goal: %v", e)
 	}
-	g, _ := readGoal(path)
-	if g.State != "paused" || g.Reason == "" {
-		t.Fatal("failed evaluator completed or lost condition")
+	if g, _ := readGoal(path); g.State != "active" || g.Failures != 1 || !strings.Contains(out.String(), `"block"`) || !strings.Contains(out.String(), "(1/3)") {
+		t.Fatalf("transient failure: %+v %s", g, out.String())
+	}
+	// A real verdict resets the count.
+	fail.Store(false)
+	out.Reset()
+	if e := localGoalHook("fixture", time.Second, path, input, &out); e != nil {
+		t.Fatal(e)
+	}
+	if g, _ := readGoal(path); g.State != "active" || g.Failures != 0 {
+		t.Fatalf("verdict did not reset failures: %+v", g)
+	}
+	// Repeated failures pause visibly; never complete.
+	fail.Store(true)
+	for i := 1; i <= goalFailureLimit; i++ {
+		out.Reset()
+		e := localGoalHook("fixture", time.Second, path, input, &out)
+		g, _ := readGoal(path)
+		if i < goalFailureLimit && (e != nil || g.State != "active") {
+			t.Fatalf("failure %d stopped early: %v %+v", i, e, g)
+		}
+		if i == goalFailureLimit && (e == nil || g.State != "paused" || g.Reason == "") {
+			t.Fatalf("failure %d did not pause: %v %+v", i, e, g)
+		}
+	}
+}
+
+func TestStaleGoalLockIsReclaimed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.goal")
+	if err := os.Mkdir(path+".lock", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// A fresh lock is respected.
+	if err := withGoalLock(path, func() error { return nil }); err == nil {
+		t.Fatal("fresh lock was taken")
+	}
+	old := time.Now().Add(-2 * staleGoalLock)
+	if err := os.Chtimes(path+".lock", old, old); err != nil {
+		t.Fatal(err)
+	}
+	ran := false
+	if err := withGoalLock(path, func() error { ran = true; return nil }); err != nil || !ran {
+		t.Fatalf("stale lock not reclaimed: %v", err)
+	}
+	if _, err := os.Stat(path + ".lock"); !os.IsNotExist(err) {
+		t.Fatal("lock left behind")
 	}
 }
 
