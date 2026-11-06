@@ -8,6 +8,8 @@
   `ggrun-client start` is the prompt-based equivalent.
 - Any Claude Code 2.1.307+ runs (2.1.316+ for main-model review and /ggoal);
   versions newer than tested are marked, not refused. Live-tested on 2.1.319.
+- Installers without a pinned version install the newest release; GitHub's
+  "latest" link skipped pre-releases and returned 404.
 
 ## v0.1.0-alpha.7 — 2026-11-06
 
