@@ -124,13 +124,13 @@ func guidedStart(in *bufio.Reader, out io.Writer) error {
 	}
 	fmt.Fprintf(out, "Server ready: %s, %d tokens of context.\n", p.ModelName, p.ContextPerSlot)
 
-	if _, v, verr := claudeExecutable(false); verr != nil || v != controlsClaudeVersion {
+	if _, v, verr := claudeExecutable(false); verr != nil || !claudeAtLeast(v, controlsClaudeVersion) {
 		if _, lookErr := exec.LookPath("claude"); lookErr != nil {
 			return fmt.Errorf("Claude Code is not installed; install it from https://code.claude.com/docs/en/setup, then run ggrun-client again")
 		}
-		fmt.Fprintf(out, "Claude Code %s is installed; ggrun-client is qualified with %s.\n", v, controlsClaudeVersion)
-		if !yes("Install Claude Code " + controlsClaudeVersion + " now") {
-			return fmt.Errorf("Claude Code %s is required; run: claude install %s", controlsClaudeVersion, controlsClaudeVersion)
+		fmt.Fprintf(out, "Claude Code %s is older than %s, which main-model review needs.\n", v, controlsClaudeVersion)
+		if !yes("Update Claude Code to " + controlsClaudeVersion + " now") {
+			return fmt.Errorf("Claude Code %s or newer is required; run: claude install %s", controlsClaudeVersion, controlsClaudeVersion)
 		}
 		if err = installClaude(controlsClaudeVersion); err != nil {
 			return fmt.Errorf("claude install %s: %w", controlsClaudeVersion, err)

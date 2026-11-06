@@ -41,11 +41,15 @@ cd your-project
 ggrun-client
 ```
 
-It asks for the server URL and gateway token the first time (on the server:
-`ggrun gateway-token`), waits while the model loads, asks for a new token if
-the server's changed, offers to install the qualified Claude Code, offers to
-resume your last session in that directory, and launches with main-model
-review. Inside the session, use `/ggoal <condition>` for long-running goals.
+It opens a menu: add a server (URL + gateway token; on the server run
+`ggrun gateway-token`), see whether it is ready or still loading, start a new
+session here, resume the last one here or a recent project elsewhere, update a
+changed token, and toggle main-model review. When Claude exits you return to
+the menu. Inside the session, use `/ggoal <condition>` for long-running goals.
+`ggrun-client start` asks the same questions as plain prompts.
+
+Claude Code 2.1.307 or newer works; main-model review and `/ggoal` need 2.1.316
+or newer. Tested: 2.1.316 and 2.1.319. Newer releases run, marked untested.
 
 The individual commands remain available:
 

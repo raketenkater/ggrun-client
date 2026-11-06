@@ -41,8 +41,8 @@ func main() {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		if term.IsTerminal(os.Stdin.Fd()) {
-			return guidedStart(bufio.NewReader(os.Stdin), os.Stderr)
+		if term.IsTerminal(os.Stdin.Fd()) && term.IsTerminal(os.Stdout.Fd()) {
+			return runTUI()
 		}
 		usage()
 		return nil
@@ -54,6 +54,9 @@ func run(args []string) error {
 	case "help", "--help", "-h":
 		usage()
 		return nil
+	case "start":
+		// Prompt-by-prompt guided start for terminals without full-screen UI.
+		return guidedStart(bufio.NewReader(os.Stdin), os.Stderr)
 	case "connect":
 		return connect(args[1:])
 	case "doctor":
@@ -98,7 +101,8 @@ func run(args []string) error {
 func usage() {
 	fmt.Println(`ggrun-client connects installed Claude Code to a ggrun server.
 
-  ggrun-client                 guided start: connect if needed, then launch
+  ggrun-client                 menu: servers, new/resume sessions, settings
+  ggrun-client start           the same as plain prompts (no full-screen UI)
   ggrun-client connect URL [--name default] [--allow-http] [--token-stdin]
   ggrun-client doctor [--name default]
   ggrun-client claude [--connection default] [--resume [SESSION_ID]] [--local-controls] [-- CLAUDE_ARGS...]

@@ -13,20 +13,58 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/raketenkater/ggrun/clientkit"
 )
 
-// Claude Code releases qualified with this client. Local controls depend on
-// hook behavior verified only on controlsClaudeVersion.
+// Claude Code versions. targetClaudeVersion is the oldest release the
+// connector supports; controlsClaudeVersion is the oldest with the hook and
+// plugin behavior main-model review and /ggoal need. Newer releases run with
+// a warning: if one changes hook semantics, review fails closed (blocks the
+// tool) rather than approving anything.
 const (
 	targetClaudeVersion   = "2.1.307"
 	controlsClaudeVersion = "2.1.316"
 )
 
-func qualifiedClaude(v string) bool { return v == targetClaudeVersion || v == controlsClaudeVersion }
+// qualifiedClaude reports a release this client was live-tested on
+// (2.1.319: main-model review + /ggoal, 2026-11-06).
+func qualifiedClaude(v string) bool {
+	return v == targetClaudeVersion || v == controlsClaudeVersion || v == "2.1.319"
+}
+
+// claudeAtLeast compares dotted numeric versions; unparsable is false.
+func claudeAtLeast(v, min string) bool {
+	parse := func(s string) ([3]int, bool) {
+		var out [3]int
+		parts := strings.Split(s, ".")
+		if len(parts) != 3 {
+			return out, false
+		}
+		for i, p := range parts {
+			n, err := strconv.Atoi(p)
+			if err != nil || n < 0 {
+				return out, false
+			}
+			out[i] = n
+		}
+		return out, true
+	}
+	a, ok1 := parse(v)
+	b, ok2 := parse(min)
+	if !ok1 || !ok2 {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return a[i] > b[i]
+		}
+	}
+	return true
+}
 
 var cloudProviders = []string{"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY", "CLAUDE_CODE_USE_ANTHROPIC_AWS", "CLAUDE_CODE_USE_MANTLE"}
 
@@ -48,8 +86,8 @@ func claudeExecutable(allowUntested bool) (string, string, error) {
 		return "", "", fmt.Errorf("cannot read Claude Code version")
 	}
 	v := regexp.MustCompile(`\b[0-9]+\.[0-9]+\.[0-9]+\b`).FindString(string(b))
-	if !qualifiedClaude(v) && !allowUntested {
-		return "", v, fmt.Errorf("Claude Code %s is not qualified with this client (qualified: %s, %s; local controls: %s); install one with claude install %s, or use --allow-untested-claude only after reviewing compatibility", v, targetClaudeVersion, controlsClaudeVersion, controlsClaudeVersion, controlsClaudeVersion)
+	if !claudeAtLeast(v, targetClaudeVersion) && !allowUntested {
+		return "", v, fmt.Errorf("Claude Code %s is older than this client supports (%s or newer; %s or newer for main-model review); update with claude install %s", v, targetClaudeVersion, controlsClaudeVersion, controlsClaudeVersion)
 	}
 	return path, v, nil
 }
@@ -129,6 +167,8 @@ type session struct {
 	Context     int
 	Version     int
 	Controls    bool `json:"controls,omitempty"`
+	// Dir lets the client TUI list and resume recent projects from anywhere.
+	Dir string `json:"dir,omitempty"`
 }
 
 func sessionPath(name string) (string, error) {
@@ -216,11 +256,11 @@ func launch(args []string) error {
 	if err != nil {
 		return err
 	}
-	if o.localControls && v != controlsClaudeVersion {
-		return fmt.Errorf("local controls require qualified Claude Code %s; install it with claude install %s", controlsClaudeVersion, controlsClaudeVersion)
+	if o.localControls && !claudeAtLeast(v, controlsClaudeVersion) && !o.allowUntested {
+		return fmt.Errorf("main-model review and /ggoal need Claude Code %s or newer; update with claude install %s", controlsClaudeVersion, controlsClaudeVersion)
 	}
 	if !qualifiedClaude(v) {
-		fmt.Fprintf(os.Stderr, "[ggrun-client] warning: Claude Code %s is untested with this client; the status line will show it.\n", v)
+		fmt.Fprintf(os.Stderr, "[ggrun-client] Claude Code %s is newer than the tested %s; it should work, and the status line marks it untested.\n", v, controlsClaudeVersion)
 	}
 	sessionFile, err := sessionPath(o.name)
 	if err != nil {
@@ -270,6 +310,12 @@ func launch(args []string) error {
 		childArgs = append([]string{"--session-id", s.ID}, childArgs...)
 	}
 	s.Controls = o.localControls
+	if cwd, err := os.Getwd(); err == nil {
+		if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
+			cwd = resolved
+		}
+		s.Dir = cwd
+	}
 	if o.goalFile != "" {
 		if err = setGoalForSession(o.name, s, o.goalFile); err != nil {
 			return err
