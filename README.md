@@ -172,8 +172,9 @@ ggrun-client goal resume --connection server
 ggrun-client goal set --connection server --file GOAL.md
 ```
 
-An unmet verdict continues work; a complete verdict records completion. An
-evaluator error pauses the goal without claiming success. Clear/replacement
+An unmet verdict continues work; a complete verdict records completion. A
+failed check continues work and checks again at the next stop; three failures
+in a row pause the goal without claiming success. Clear/replacement
 cancels an in-flight check. Resume preserves the condition and verified session.
 Native Stop continuation caps still apply when the agent repeatedly makes no
 tool progress; the saved goal is not marked complete when that cap stops a turn.

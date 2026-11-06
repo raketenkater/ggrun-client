@@ -33,7 +33,12 @@ type goalRecord struct {
 	State     string `json:"state"`
 	Reason    string `json:"reason,omitempty"`
 	Revision  string `json:"revision"`
+	// Failures counts consecutive evaluator errors. One slow or lost check
+	// must not stop an autonomous goal; repeated errors pause it visibly.
+	Failures int `json:"failures,omitempty"`
 }
+
+const goalFailureLimit = 3
 
 func goalFile(name string) (string, error) { p, e := sessionPath(name); return p + ".goal", e }
 func readGoal(path string) (goalRecord, error) {
@@ -47,6 +52,8 @@ func readGoal(path string) (goalRecord, error) {
 	}
 	return g, nil
 }
+
+var staleGoalLock = 30 * time.Second
 
 // Hold this lock only for short state transitions, never during inference.
 func withGoalLock(path string, f func() error) error {
@@ -62,6 +69,12 @@ func withGoalLock(path string, f func() error) error {
 		}
 		if !os.IsExist(e) {
 			return e
+		}
+		// The lock guards a few-ms state write, never inference. One this old
+		// was left by a killed hook; reclaim it instead of freezing all goals.
+		if st, err := os.Stat(path + ".lock"); err == nil && time.Since(st.ModTime()) > staleGoalLock {
+			_ = os.Remove(path + ".lock")
+			continue
 		}
 		if time.Now().After(until) {
 			return fmt.Errorf("goal state is locked; check for another client before removing %s.lock", path)
@@ -341,9 +354,15 @@ func localGoalHook(name string, timeout time.Duration, path string, input review
 		}
 		current = true
 		if e != nil {
-			n.State = "paused"
-			n.Reason = "Goal evaluator failed: " + e.Error()
+			n.Failures++
+			if n.Failures >= goalFailureLimit || permanentGoalError(e) {
+				n.State = "paused"
+				n.Reason = "Goal evaluator failed: " + e.Error()
+			} else {
+				n.Reason = fmt.Sprintf("Goal check failed (%d/%d), retrying at the next stop: %v", n.Failures, goalFailureLimit, e)
+			}
 		} else {
+			n.Failures = 0
 			n.Reason = verdict.Reason
 			switch verdict.Decision {
 			case "allow":
@@ -367,6 +386,10 @@ func localGoalHook(name string, timeout time.Duration, path string, input review
 		return e
 	}
 	if e != nil {
+		if n, err := readGoal(path); err == nil && n.State == "active" && n.Revision == g.Revision {
+			// Transient: keep the agent working; the next stop checks again.
+			return json.NewEncoder(out).Encode(map[string]string{"decision": "block", "reason": "User-configured goal: " + g.Condition + "\n" + n.Reason + "\nContinue working toward the goal."})
+		}
 		return e
 	} // Visible hook error; persisted goal remains paused, never complete.
 	if verdict.Decision == "deny" {
@@ -662,4 +685,10 @@ func controlArgs(args []string, name string, timeout time.Duration) ([]string, e
 		return nil, e
 	}
 	return append([]string{"--plugin-dir", pluginDir}, args...), nil
+}
+
+// permanentGoalError marks errors that a retry cannot fix.
+func permanentGoalError(e error) bool {
+	m := e.Error()
+	return strings.Contains(m, "model identity changed") || strings.Contains(m, "run /compact")
 }

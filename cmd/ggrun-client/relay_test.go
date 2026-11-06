@@ -218,10 +218,12 @@ func TestReviewFailsFastOnDeadPath(t *testing.T) {
 	defer cancel()
 	start := time.Now()
 	_, err := evaluateReview(ctx, c, []byte(`{}`))
-	if err == nil || !strings.Contains(err.Error(), "lost the server connection") {
+	if err == nil || !strings.Contains(err.Error(), "lost the server connection twice") {
 		t.Fatalf("review on a dead path: %v", err)
 	}
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) || time.Since(start) > 8*time.Second {
+	// Two attempts: PING detection, then a retry whose TLS handshake meets the
+	// still-dead path (15 s handshake timeout). Far below the 30 s budget.
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) || time.Since(start) > 22*time.Second {
 		t.Fatalf("review waited %s for a dead path", time.Since(start))
 	}
 }
@@ -232,5 +234,40 @@ func TestLoopbackNoProxyKeepsUserEntries(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("%q lacks %q", got, want)
 		}
+	}
+}
+
+func TestReviewRetriesOnceAfterLostConnection(t *testing.T) {
+	var calls atomic.Int64
+	gw := h2Gateway(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			// Drop the connection before any response, like a dead path.
+			hj, ok := w.(http.Hijacker)
+			if ok {
+				c, _, _ := hj.Hijack()
+				c.Close()
+				return
+			}
+			panic(http.ErrAbortHandler)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"stop_reason":"tool_use","content":[{"type":"tool_use","name":"submit_review","input":{"decision":"allow","reason":"fixture"}}]}`)
+	}))
+	c := connection{URL: gw.URL, Token: strings.Repeat("k", 40)}
+	c.Profile.MainAlias = "local"
+	v, err := evaluateReview(context.Background(), c, []byte(`{}`))
+	if err != nil || v.Decision != "allow" || calls.Load() != 2 {
+		t.Fatalf("retry: %+v %v after %d calls", v, err, calls.Load())
+	}
+}
+
+func TestReviewMaxTokensIsReportedDistinctly(t *testing.T) {
+	gw := h2Gateway(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"stop_reason":"max_tokens","content":[{"type":"thinking","thinking":"..."}]}`)
+	}))
+	c := connection{URL: gw.URL, Token: strings.Repeat("k", 40)}
+	c.Profile.MainAlias = "local"
+	if _, err := evaluateReview(context.Background(), c, []byte(`{}`)); err == nil || !strings.Contains(err.Error(), "max_tokens") {
+		t.Fatalf("max_tokens: %v", err)
 	}
 }

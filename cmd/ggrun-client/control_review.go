@@ -177,36 +177,9 @@ func evaluateControl(ctx context.Context, c connection, evidence []byte, policy 
 	if err != nil {
 		return verdict, err
 	}
-	req, err := http.NewRequestWithContext(ctx, "POST", c.URL+"/v1/messages", bytes.NewReader(body))
+	b, err := postControl(ctx, c, body)
 	if err != nil {
-		return verdict, fmt.Errorf("invalid review endpoint")
-	}
-	req.Header.Set("Authorization", "Bearer "+c.Token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Anthropic-Version", "2023-06-01")
-	if c.Profile.ModelID != "" {
-		req.Header.Set("X-Ggrun-Model-ID", c.Profile.ModelID)
-	}
-	if c.Profile.ContextPerSlot > 0 {
-		req.Header.Set("X-Ggrun-Context", strconv.Itoa(c.Profile.ContextPerSlot))
-	}
-	// The review can wait many minutes for the first byte while the model
-	// prefills; the transport's liveness probes, not a deadline, catch a dead path.
-	cl := &http.Client{Transport: remoteTransport(), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	resp, err := cl.Do(req)
-	if err != nil {
-		if ctx.Err() == nil {
-			return verdict, fmt.Errorf("main-model review lost the server connection; no approval issued")
-		}
-		return verdict, fmt.Errorf("main-model review unavailable or cancelled")
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return verdict, fmt.Errorf("main-model review returned HTTP %d; no approval issued", resp.StatusCode)
-	}
-	b, err := io.ReadAll(io.LimitReader(resp.Body, (64<<10)+1))
-	if err != nil || len(b) > 64<<10 {
-		return verdict, fmt.Errorf("invalid review response size")
+		return verdict, err
 	}
 	var message struct {
 		Stop    string `json:"stop_reason"`
@@ -216,6 +189,9 @@ func evaluateControl(ctx context.Context, c connection, evidence []byte, policy 
 			Name  string          `json:"name"`
 			Input json.RawMessage `json:"input"`
 		} `json:"content"`
+	}
+	if json.Unmarshal(b, &message) == nil && message.Stop == "max_tokens" {
+		return verdict, fmt.Errorf("review used its whole output budget without a decision (stop_reason max_tokens); check that the server honors chat_template_kwargs.enable_thinking=false")
 	}
 	if json.Unmarshal(b, &message) != nil || (message.Stop != "end_turn" && message.Stop != "tool_use") {
 		return verdict, fmt.Errorf("review did not return one complete decision")
@@ -349,4 +325,53 @@ func waitReviewEvidence(ctx context.Context, input reviewInput) ([]byte, error) 
 		evidence, err = readReviewEvidence(input)
 	}
 	return evidence, err
+}
+
+// postControl sends one control request. A connection lost before a response
+// is retried once on a fresh connection: the transport fails a dead path in
+// about a minute, and the review must not block a tool for that alone.
+func postControl(ctx context.Context, c connection, body []byte) ([]byte, error) {
+	// The review can wait many minutes for the first byte while the model
+	// prefills; the transport's liveness probes, not a deadline, catch a dead path.
+	cl := &http.Client{Transport: remoteTransport(), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	for attempt := 0; ; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, "POST", c.URL+"/v1/messages", bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("invalid review endpoint")
+		}
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Anthropic-Version", "2023-06-01")
+		if c.Profile.ModelID != "" {
+			req.Header.Set("X-Ggrun-Model-ID", c.Profile.ModelID)
+		}
+		if c.Profile.ContextPerSlot > 0 {
+			req.Header.Set("X-Ggrun-Context", strconv.Itoa(c.Profile.ContextPerSlot))
+		}
+		resp, err := cl.Do(req)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, fmt.Errorf("main-model review unavailable or cancelled")
+			}
+			if attempt == 0 {
+				continue
+			}
+			return nil, fmt.Errorf("main-model review lost the server connection twice; no approval issued")
+		}
+		b, readErr := io.ReadAll(io.LimitReader(resp.Body, (64<<10)+1))
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("main-model review returned HTTP %d; no approval issued", resp.StatusCode)
+		}
+		if readErr != nil {
+			if ctx.Err() == nil && attempt == 0 {
+				continue
+			}
+			return nil, fmt.Errorf("main-model review response was cut off; no approval issued")
+		}
+		if len(b) > 64<<10 {
+			return nil, fmt.Errorf("invalid review response size")
+		}
+		return b, nil
+	}
 }
