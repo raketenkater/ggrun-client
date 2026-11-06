@@ -7,6 +7,8 @@
   hook is reclaimed after 30 s (#7).
 - Reviews retry once after a lost connection and report `max_tokens`
   distinctly (#8).
+- Includes alpha.6 (its tag was not published: GitHub retired the macos-14
+  runner; CI now uses macos-15).
 
 ## v0.1.0-alpha.6 — 2026-11-06
 
