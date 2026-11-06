@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Loopback relay with HTTP/2 PING and TCP keepalive: a dead server path fails
+  in about a minute and Claude retries, instead of hanging (#2, #3). Main-model
+  reviews use the same transport.
+- Status line shows the server's prefill/decode speed and queue, and warns when
+  a request is lost, a stream stalls, the connection drops, or Claude Code is
+  untested or changed on disk (#3, #4). Auto-updater disabled for every session.
+
 ## v0.1.0-alpha.2 — 2026-10-28
 
 - Reject saved empty connection overrides and case variants on Windows before

@@ -167,7 +167,7 @@ func TestWorkflowHookUpdatesWithoutGrantingPermission(t *testing.T) {
 }
 func TestClientKeepsCustomSettingsAndPermissionChoice(t *testing.T) {
 	home(t)
-	args, err := clientArgs([]string{"--settings", `{"statusLine":{"command":"mine"}}`, "--permission-mode", "default", "--mcp-config", "mine.json"}, "default", profile())
+	args, err := clientArgs([]string{"--settings", `{"statusLine":{"command":"mine"}}`, "--permission-mode", "default", "--mcp-config", "mine.json"}, "default", profile(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +201,16 @@ func TestMain(m *testing.M) {
 			os.Exit(0)
 		}
 		cwd, _ := os.Getwd()
-		b, _ := json.Marshal(map[string]any{"args": os.Args[1:], "env": os.Environ(), "cwd": cwd})
+		// Reach the gateway the way Claude does: through ANTHROPIC_BASE_URL.
+		relayed := 0
+		if req, err := http.NewRequest("GET", os.Getenv("ANTHROPIC_BASE_URL")+"/ggrun/client", nil); err == nil {
+			req.Header.Set("Authorization", "Bearer "+os.Getenv("ANTHROPIC_AUTH_TOKEN"))
+			if resp, err := http.DefaultClient.Do(req); err == nil {
+				relayed = resp.StatusCode
+				resp.Body.Close()
+			}
+		}
+		b, _ := json.Marshal(map[string]any{"args": os.Args[1:], "env": os.Environ(), "cwd": cwd, "relayed": relayed})
 		if err := os.WriteFile(os.Getenv("GGRUN_CLIENT_TEST_RECEIPT"), b, 0600); err != nil {
 			os.Exit(7)
 		}
@@ -271,6 +280,7 @@ func TestLaunchRunsToolsOnClientAndScopesEnvironment(t *testing.T) {
 	var got struct {
 		Args, Env []string
 		Cwd       string
+		Relayed   int
 	}
 	if err = json.Unmarshal(b, &got); err != nil {
 		t.Fatal(err)
@@ -280,8 +290,11 @@ func TestLaunchRunsToolsOnClientAndScopesEnvironment(t *testing.T) {
 		t.Fatalf("child left project: %s", got.Cwd)
 	}
 	env := strings.Join(got.Env, "\n")
-	if !strings.Contains(env, "ANTHROPIC_BASE_URL="+s.URL+"/prefix") || strings.Contains(env, "do-not-forward") || !strings.Contains(env, "CLAUDE_CODE_MAX_CONTEXT_TOKENS=65536") {
+	if !strings.Contains(env, "ANTHROPIC_BASE_URL=http://127.0.0.1:") || strings.Contains(env, "do-not-forward") || !strings.Contains(env, "CLAUDE_CODE_MAX_CONTEXT_TOKENS=65536") || !strings.Contains(env, "DISABLE_AUTOUPDATER=1") {
 		t.Fatal("incorrect child environment")
+	}
+	if got.Relayed != 200 {
+		t.Fatalf("child could not reach the gateway (and its /prefix path) through the relay: %d", got.Relayed)
 	}
 	if os.Getenv("ANTHROPIC_API_KEY") != "do-not-forward" {
 		t.Fatal("parent environment mutated")

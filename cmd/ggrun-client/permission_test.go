@@ -14,7 +14,7 @@ func TestPermissionDefaultsToAutoWithAndWithoutWorker(t *testing.T) {
 	for _, worker := range []bool{false, true} {
 		p := profile()
 		p.SeparateWorker = worker
-		args, err := clientArgs([]string{"--settings", "{}", "--mcp-config", "{}"}, "default", p)
+		args, err := clientArgs([]string{"--settings", "{}", "--mcp-config", "{}"}, "default", p, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -41,7 +41,7 @@ func TestPermissionOverridesRemainAuthoritativeWithoutWorker(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("GGRUN_CLAUDE_PERMISSION_MODE", tc.env)
 			extra := append([]string{"--settings", "{}", "--mcp-config", "{}"}, tc.extra...)
-			args, err := clientArgs(extra, "default", profile())
+			args, err := clientArgs(extra, "default", profile(), "")
 			if err != nil {
 				t.Fatal(err)
 			}

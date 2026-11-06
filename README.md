@@ -181,3 +181,18 @@ Long-context checks can take several minutes. Review quality still depends on
 the selected model. Custom input-rewriting hooks and large workflows require
 their own workload qualification; a simple live task is not proof of every
 workflow. No user settings files are overwritten.
+
+### Connection health and status line
+
+Claude Code talks to a loopback relay inside `ggrun-client`, which forwards to
+the server. The model may stay silent for as long as a prefill needs; the relay
+instead checks the path itself (HTTP/2 PING, TCP keepalive). When the path is
+dead (laptop sleep, network change, proxy restart) the request fails in about a
+minute and Claude retries on a new connection instead of waiting indefinitely.
+
+The status line shows the server's live progress (prefill/decode speed, queue)
+as a local `ggrun claude` session does. Servers without the progress endpoint
+fall back to queue counts. It also warns when a request is not reaching the
+server, a stream stops sending data, the connection was lost, or the running
+Claude Code version is untested or changed on disk. Claude's auto-updater is
+disabled for the session so the qualified version stays in use.

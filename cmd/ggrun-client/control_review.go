@@ -190,9 +190,14 @@ func evaluateControl(ctx context.Context, c connection, evidence []byte, policy 
 	if c.Profile.ContextPerSlot > 0 {
 		req.Header.Set("X-Ggrun-Context", strconv.Itoa(c.Profile.ContextPerSlot))
 	}
-	cl := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	// The review can wait many minutes for the first byte while the model
+	// prefills; the transport's liveness probes, not a deadline, catch a dead path.
+	cl := &http.Client{Transport: remoteTransport(), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, err := cl.Do(req)
 	if err != nil {
+		if ctx.Err() == nil {
+			return verdict, fmt.Errorf("main-model review lost the server connection; no approval issued")
+		}
 		return verdict, fmt.Errorf("main-model review unavailable or cancelled")
 	}
 	defer resp.Body.Close()
