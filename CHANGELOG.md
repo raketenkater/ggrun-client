@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.0-alpha.8 — 2026-11-06
+
+- `ggrun-client` with no arguments is a guided start: connect on first use,
+  wait while the model loads, repair a changed gateway token, offer the
+  qualified Claude Code install, offer resume, launch with main-model controls.
+
 ## v0.1.0-alpha.7 — 2026-11-06
 
 - Goal checks: one failed check keeps the goal active and continues work; it

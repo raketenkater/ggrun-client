@@ -41,6 +41,9 @@ func main() {
 }
 func run(args []string) error {
 	if len(args) == 0 {
+		if term.IsTerminal(os.Stdin.Fd()) {
+			return guidedStart(bufio.NewReader(os.Stdin), os.Stderr)
+		}
 		usage()
 		return nil
 	}
@@ -95,6 +98,7 @@ func run(args []string) error {
 func usage() {
 	fmt.Println(`ggrun-client connects installed Claude Code to a ggrun server.
 
+  ggrun-client                 guided start: connect if needed, then launch
   ggrun-client connect URL [--name default] [--allow-http] [--token-stdin]
   ggrun-client doctor [--name default]
   ggrun-client claude [--connection default] [--resume [SESSION_ID]] [--local-controls] [-- CLAUDE_ARGS...]
@@ -107,6 +111,12 @@ on the laptop. Server URLs work over HTTPS, LAN, SSH tunnels or optional VPNs.
 Tokens are read privately, from GGRUN_AUTH_TOKEN, or through --token-stdin.
 Remote cleartext HTTP requires --allow-http. Never put a token in the URL.`)
 }
+
+var (
+	errCredential  = errors.New("gateway rejected the credential; reconnect with the server's current gateway token")
+	errLoading     = errors.New("model is loading or recovering; wait, then retry this command")
+	errUnreachable = errors.New("cannot reach gateway; check server, URL, DNS and network connection")
+)
 
 var namePattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,48}$`)
 
@@ -157,15 +167,15 @@ func request(ctx context.Context, c connection, path string, out any) error {
 	cl := http.Client{Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, err := cl.Do(req)
 	if err != nil {
-		return fmt.Errorf("cannot reach gateway; check server, URL, DNS and network connection")
+		return errUnreachable
 	}
 	defer resp.Body.Close()
 	switch resp.StatusCode {
 	case 200:
 	case 401, 403:
-		return fmt.Errorf("gateway rejected the credential; reconnect with the server's current gateway token")
+		return errCredential
 	case 503:
-		return fmt.Errorf("model is loading or recovering; wait, then retry this command")
+		return errLoading
 	case 301, 302, 303, 307, 308:
 		return fmt.Errorf("gateway redirected the request; connect directly to the final base URL (credentials were not forwarded)")
 	default:
