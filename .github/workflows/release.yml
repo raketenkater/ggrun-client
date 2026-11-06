@@ -1,0 +1,72 @@
+name: Client release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  validate:
+    uses: ./.github/workflows/ci.yml
+  release:
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Require a remotely resolvable pinned contract
+        run: |
+          if grep -q '^replace ' go.mod; then echo 'Remove development replaces before release.' >&2; exit 1; fi
+          go mod download
+          go test -count=1 ./...
+          go test -count=1 github.com/raketenkater/ggrun/clientkit
+      - name: Build binaries and checksums
+        shell: bash
+        run: |
+          mkdir -p dist
+          for target in linux/amd64 linux/arm64 windows/amd64 windows/arm64 darwin/arm64 darwin/amd64; do
+            os="${target%/*}"
+            arch="${target#*/}"
+            asset="ggrun-client-$os-$arch"
+            if [ "$os" = windows ]; then asset="$asset.exe"; fi
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" -o "dist/$asset" ./cmd/ggrun-client
+          done
+          cd dist
+          sha256sum ggrun-client-* > SHA256SUMS
+      - name: Publish client artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          release_args=("$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes)
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then release_args+=(--prerelease); fi
+          gh release create "${release_args[@]}"
+  released-install:
+    needs: release
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install published Unix binary with checksum validation
+        if: runner.os != 'Windows'
+        env:
+          GGRUN_CLIENT_VERSION: ${{ github.ref_name }}
+          GGRUN_CLIENT_INSTALL_DIR: ${{ runner.temp }}/client-install
+        run: |
+          sh install.sh
+          "$GGRUN_CLIENT_INSTALL_DIR/ggrun-client" --help
+          test "$("$GGRUN_CLIENT_INSTALL_DIR/ggrun-client" version)" = "$GGRUN_CLIENT_VERSION"
+      - name: Install published Windows binary with checksum validation
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./install.ps1 -Version $env:GITHUB_REF_NAME -InstallDir "$env:RUNNER_TEMP/client-install" -NoPath
+          if ($LASTEXITCODE -ne 0) { throw 'Install failed' }
+          & "$env:RUNNER_TEMP/client-install/ggrun-client.exe" --help
+          $version = & "$env:RUNNER_TEMP/client-install/ggrun-client.exe" version
+          if ($version -ne $env:GITHUB_REF_NAME) { throw 'Wrong installed version' }

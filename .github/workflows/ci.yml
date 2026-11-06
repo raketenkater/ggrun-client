@@ -1,0 +1,88 @@
+name: Client CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Connection, credentials, working directory, resume and disconnect
+        run: go test -race -count=1 ./...
+      - name: Pinned server policy conformance
+        run: go test -count=1 github.com/raketenkater/ggrun/clientkit
+      - name: Vet
+        run: go vet ./...
+      - name: Build installed entrypoint
+        run: go build -o dist/ ./cmd/ggrun-client
+      - name: Run installed entrypoint outside checkout
+        shell: bash
+        run: |
+          binary="$GITHUB_WORKSPACE/dist/ggrun-client"
+          if [ "${RUNNER_OS}" = Windows ]; then binary="${binary}.exe"; fi
+          cd "$RUNNER_TEMP"
+          "$binary" version
+          "$binary" --help
+  portable:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - {os: linux, arch: amd64}
+          - {os: linux, arch: arm64}
+          - {os: windows, arch: amd64}
+          - {os: windows, arch: arm64}
+          - {os: darwin, arch: arm64}
+          - {os: darwin, arch: amd64}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Cross-build
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+        run: go build -o dist/client ./cmd/ggrun-client
+  released-installer-smoke:
+    # Pin an existing artifact to test installer changes on PRs. The release
+    # workflow separately verifies the newly published tag on every platform.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    env:
+      GGRUN_CLIENT_VERSION: v0.1.0-alpha.1
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install published Unix artifact
+        env:
+          GGRUN_CLIENT_INSTALL_DIR: ${{ runner.temp }}/client-install
+        if: runner.os != 'Windows'
+        run: |
+          sh install.sh
+          test "$("$GGRUN_CLIENT_INSTALL_DIR/ggrun-client" version)" = "$GGRUN_CLIENT_VERSION"
+          "$GGRUN_CLIENT_INSTALL_DIR/ggrun-client" --help
+      - name: Install published Windows artifact
+        env:
+          GGRUN_CLIENT_INSTALL_DIR: ${{ runner.temp }}/client-install
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./install.ps1 -Version $env:GGRUN_CLIENT_VERSION -InstallDir $env:GGRUN_CLIENT_INSTALL_DIR -NoPath
+          if ($LASTEXITCODE -ne 0) { throw 'Install failed' }
+          $binary = Join-Path $env:GGRUN_CLIENT_INSTALL_DIR 'ggrun-client.exe'
+          if ((& $binary version) -ne $env:GGRUN_CLIENT_VERSION) { throw 'Wrong installed version' }
+          & $binary --help
