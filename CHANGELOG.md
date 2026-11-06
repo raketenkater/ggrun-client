@@ -2,9 +2,14 @@
 
 ## v0.1.0-alpha.8 — 2026-11-06
 
-- `ggrun-client` with no arguments is a guided start: connect on first use,
-  wait while the model loads, repair a changed gateway token, offer the
-  qualified Claude Code install, offer resume, launch with main-model controls.
+- `ggrun-client` with no arguments opens a menu: servers with live status,
+  new session, resume here or a recent project, add server, update token,
+  main-model review setting; returns to the menu when Claude exits.
+  `ggrun-client start` is the prompt-based equivalent.
+- Any Claude Code 2.1.307+ runs (2.1.316+ for main-model review and /ggoal);
+  versions newer than tested are marked, not refused. Live-tested on 2.1.319.
+- Installers without a pinned version install the newest release; GitHub's
+  "latest" link skipped pre-releases and returned 404.
 
 ## v0.1.0-alpha.7 — 2026-11-06
 

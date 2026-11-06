@@ -11,11 +11,14 @@ case "$(uname -m)" in
  *) echo 'No released binary for this architecture.' >&2; exit 1 ;;
 esac
 asset="ggrun-client-$platform-$arch"
-release="https://github.com/raketenkater/ggrun-client/releases/latest/download"
-if [ -n "${GGRUN_CLIENT_VERSION:-}" ]; then
- case "$GGRUN_CLIENT_VERSION" in *[!a-zA-Z0-9._-]*|'') echo 'Invalid release version.' >&2; exit 1 ;; esac
- release="https://github.com/raketenkater/ggrun-client/releases/download/$GGRUN_CLIENT_VERSION"
+version="${GGRUN_CLIENT_VERSION:-}"
+if [ -z "$version" ]; then
+ # releases/latest skips pre-releases; take the newest published release.
+ version="$(curl --fail --silent --location --retry 3 --proto '=https' 'https://api.github.com/repos/raketenkater/ggrun-client/releases?per_page=1' | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)"
+ if [ -z "$version" ]; then echo 'Cannot find the newest release; set GGRUN_CLIENT_VERSION.' >&2; exit 1; fi
 fi
+case "$version" in *[!a-zA-Z0-9._-]*) echo 'Invalid release version.' >&2; exit 1 ;; esac
+release="https://github.com/raketenkater/ggrun-client/releases/download/$version"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 curl --fail --location --retry 3 --proto '=https' "$release/$asset" -o "$tmp/$asset"
@@ -32,4 +35,4 @@ destination="${GGRUN_CLIENT_INSTALL_DIR:-$HOME/.local/bin}"
 mkdir -p "$destination"
 install -m 755 "$tmp/$asset" "$destination/ggrun-client"
 "$destination/ggrun-client" version
-printf 'Installed in %s. Add that directory to PATH if needed, then run ggrun-client --help.\n' "$destination"
+printf 'Installed in %s. Add that directory to PATH if needed, then run ggrun-client in your project.\n' "$destination"

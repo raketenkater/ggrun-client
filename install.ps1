@@ -9,11 +9,13 @@ $arch = 'amd64'
 if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { $arch = 'arm64' }
 $asset = "ggrun-client-windows-$arch.exe"
 if ($Version -eq 'latest') {
- $release = 'https://github.com/raketenkater/ggrun-client/releases/latest/download'
-} else {
- if ($Version -notmatch '^[a-zA-Z0-9._-]+$') { throw 'Invalid release version.' }
- $release = "https://github.com/raketenkater/ggrun-client/releases/download/$Version"
+ # releases/latest skips pre-releases; take the newest published release.
+ $newest = Invoke-RestMethod -UseBasicParsing 'https://api.github.com/repos/raketenkater/ggrun-client/releases?per_page=1'
+ $Version = @($newest)[0].tag_name
+ if (-not $Version) { throw 'Cannot find the newest release; pass -Version.' }
 }
+if ($Version -notmatch '^[a-zA-Z0-9._-]+$') { throw 'Invalid release version.' }
+$release = "https://github.com/raketenkater/ggrun-client/releases/download/$Version"
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString())
 New-Item -ItemType Directory -Path $tmp | Out-Null
 try {
