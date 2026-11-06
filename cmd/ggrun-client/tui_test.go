@@ -143,7 +143,7 @@ func TestNewerClaudeIsAllowedOlderIsNot(t *testing.T) {
 	home(t)
 	saveTestConnection(t, "server", "https://example.invalid")
 	m := newTUIModel()
-	m.Update(claudeMsg{"2.1.319", true})
+	m.Update(claudeMsg{"2.1.330", true})
 	if v := m.View(); strings.Contains(v, "Update Claude Code") || !strings.Contains(v, "newer than tested") {
 		t.Fatalf("newer Claude treated as unsupported:\n%s", v)
 	}
