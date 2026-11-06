@@ -19,7 +19,14 @@ import (
 	"github.com/raketenkater/ggrun/clientkit"
 )
 
-const targetClaudeVersion = "2.1.307"
+// Claude Code releases qualified with this client. Local controls depend on
+// hook behavior verified only on controlsClaudeVersion.
+const (
+	targetClaudeVersion   = "2.1.307"
+	controlsClaudeVersion = "2.1.316"
+)
+
+func qualifiedClaude(v string) bool { return v == targetClaudeVersion || v == controlsClaudeVersion }
 
 var cloudProviders = []string{"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY", "CLAUDE_CODE_USE_ANTHROPIC_AWS", "CLAUDE_CODE_USE_MANTLE"}
 
@@ -41,8 +48,8 @@ func claudeExecutable(allowUntested bool) (string, string, error) {
 		return "", "", fmt.Errorf("cannot read Claude Code version")
 	}
 	v := regexp.MustCompile(`\b[0-9]+\.[0-9]+\.[0-9]+\b`).FindString(string(b))
-	if v != targetClaudeVersion && v != "2.1.316" && !allowUntested {
-		return "", v, fmt.Errorf("Claude Code %s is outside this client's initial target %s; use --allow-untested-claude only after reviewing compatibility", v, targetClaudeVersion)
+	if !qualifiedClaude(v) && !allowUntested {
+		return "", v, fmt.Errorf("Claude Code %s is not qualified with this client (qualified: %s, %s; local controls: %s); install one with claude install %s, or use --allow-untested-claude only after reviewing compatibility", v, targetClaudeVersion, controlsClaudeVersion, controlsClaudeVersion, controlsClaudeVersion)
 	}
 	return path, v, nil
 }
@@ -209,8 +216,11 @@ func launch(args []string) error {
 	if err != nil {
 		return err
 	}
-	if o.localControls && v != "2.1.316" {
-		return fmt.Errorf("local controls require qualified Claude Code 2.1.316; install it with claude install 2.1.316")
+	if o.localControls && v != controlsClaudeVersion {
+		return fmt.Errorf("local controls require qualified Claude Code %s; install it with claude install %s", controlsClaudeVersion, controlsClaudeVersion)
+	}
+	if !qualifiedClaude(v) {
+		fmt.Fprintf(os.Stderr, "[ggrun-client] warning: Claude Code %s is untested with this client; the status line will show it.\n", v)
 	}
 	sessionFile, err := sessionPath(o.name)
 	if err != nil {
@@ -238,7 +248,11 @@ func launch(args []string) error {
 			return fmt.Errorf("%s conflicts with the verified connection/session; use the client's --resume option", k)
 		}
 	}
-	childArgs, err := clientArgs(o.args, o.name, p)
+	statePath, err := relayStatePath(o.name)
+	if err != nil {
+		return err
+	}
+	childArgs, err := clientArgs(o.args, o.name, p, statePath)
 	if err != nil {
 		return err
 	}
@@ -262,13 +276,20 @@ func launch(args []string) error {
 		}
 	}
 	fmt.Fprintf(os.Stderr, "[ggrun-client] %s · %d tokens/slot · Claude %s · tools/files in current directory\n", p.ModelName, p.ContextPerSlot, v)
-	cmd := exec.Command(path, childArgs...)
-	cmd.Env = p.Environment(c.URL, c.Token, os.Environ())
-	if o.localControls {
-		// Local controls are qualified on one Claude release; an in-session
-		// auto-update would make the next launch refuse to start.
-		cmd.Env = append(cmd.Env, "DISABLE_AUTOUPDATER=1")
+	resolved, _ := filepath.EvalSymlinks(path)
+	rl, err := startRelay(c.URL, statePath, relayState{ClaudeVersion: v, ClaudePath: resolved, Qualified: qualifiedClaude(v)})
+	if err != nil {
+		return err
 	}
+	defer rl.Close()
+	cmd := exec.Command(path, childArgs...)
+	// Claude talks to the loopback relay, which detects a dead server path in
+	// about a minute and fails the request so Claude retries on a new
+	// connection. The model itself may stay silent for as long as it needs.
+	cmd.Env = withLoopbackNoProxy(p.Environment(rl.URL(), c.Token, os.Environ()))
+	// Versions are qualified per release; an in-session auto-update would run
+	// an untested Claude on the next launch.
+	cmd.Env = append(cmd.Env, "DISABLE_AUTOUPDATER=1")
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -298,7 +319,7 @@ func hasFlag(args []string, name string) bool {
 	}
 	return false
 }
-func clientArgs(extra []string, name string, p clientkit.Profile) ([]string, error) {
+func clientArgs(extra []string, name string, p clientkit.Profile, relayState string) ([]string, error) {
 	args := append([]string{}, extra...)
 	if p.Policy.WorkflowHook {
 		args = clientkit.WorkflowPromptArgs(args)
@@ -332,9 +353,16 @@ func clientArgs(extra []string, name string, p clientkit.Profile) ([]string, err
 		}
 		if !customStatusLine() && os.Getenv("GGRUN_CLAUDE_PROGRESS") != "0" {
 			// Status-line commands use the platform's normal shell.
-			statusCommand := shellCommand(exe, "status", "--name", name)
+			parts := []string{exe, "status", "--name", name}
+			if relayState != "" {
+				parts = append(parts, "--relay-state", relayState)
+			}
+			statusCommand := shellCommand(parts...)
 			if runtime.GOOS == "windows" {
 				statusCommand = `"` + exe + `" status --name ` + name
+				if relayState != "" {
+					statusCommand += ` --relay-state "` + relayState + `"`
+				}
 			}
 			settings["statusLine"] = map[string]any{"type": "command", "command": statusCommand, "refreshInterval": 2, "padding": 0}
 		}
@@ -422,25 +450,4 @@ func workflowHook(in io.Reader, out io.Writer) error {
 		result["updatedInput"] = input.ToolInput
 	}
 	return json.NewEncoder(out).Encode(map[string]any{"hookSpecificOutput": result})
-}
-func status(args []string) error {
-	// Best-effort status: bounded, authenticated, never runs a model probe.
-	name, err := nameFlag("status", args)
-	if err != nil {
-		return err
-	}
-	c, err := load(name)
-	if err != nil {
-		fmt.Println("ggrun: reconnect needed")
-		return nil
-	}
-	var s struct{ Active, Queued, Limit int }
-	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
-	defer cancel()
-	if err = request(ctx, c, "/ggrun/router", &s); err != nil {
-		fmt.Println("ggrun: connection unavailable")
-		return nil
-	}
-	fmt.Printf("ggrun · active %d/%d · queued %d\n", s.Active, s.Limit, s.Queued)
-	return nil
 }
