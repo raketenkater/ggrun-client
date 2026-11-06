@@ -34,8 +34,20 @@ server requires a matching remote-enabled ggrun build. See the upstream
 ## Use
 
 Choose **Remote client** in the server's ggrun TUI and launch the model. On the
-laptop, use its advertised HTTP(S) base URL and enter the gateway token at the
-hidden prompt:
+laptop, run `ggrun-client` with no arguments in your project directory:
+
+```sh
+cd your-project
+ggrun-client
+```
+
+It asks for the server URL and gateway token the first time (on the server:
+`ggrun gateway-token`), waits while the model loads, asks for a new token if
+the server's changed, offers to install the qualified Claude Code, offers to
+resume your last session in that directory, and launches with main-model
+review. Inside the session, use `/ggoal <condition>` for long-running goals.
+
+The individual commands remain available:
 
 ```sh
 ggrun-client connect https://models.example.com --name server
