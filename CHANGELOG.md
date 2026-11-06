@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.1.0-alpha.6 — 2026-11-06
 
 - Loopback relay with HTTP/2 PING and TCP keepalive: a dead server path fails
   in about a minute and Claude retries, instead of hanging (#2, #3). Main-model
