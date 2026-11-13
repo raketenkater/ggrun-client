@@ -145,7 +145,7 @@ func guidedStart(in *bufio.Reader, out io.Writer) error {
 			}
 		}
 	}
-	fmt.Fprintln(out, "Starting Claude Code. Main-model review is on; for a long-running goal type /ggoal <condition> (not native /goal).")
+	fmt.Fprintln(out, "Starting Claude Code. Main-model review is on; for a long-running goal type /goal <condition>.")
 	return startClaude(args)
 }
 

@@ -45,10 +45,10 @@ It opens a menu: add a server (URL + gateway token; on the server run
 `ggrun gateway-token`), see whether it is ready or still loading, start a new
 session here, resume the last one here or a recent project elsewhere, update a
 changed token, and toggle main-model review. When Claude exits you return to
-the menu. Inside the session, use `/ggoal <condition>` for long-running goals.
+the menu. Inside the session, use Anthropic’s native `/goal <condition>` for long-running goals.
 `ggrun-client start` asks the same questions as plain prompts.
 
-Claude Code 2.1.307 or newer works; main-model review and `/ggoal` need 2.1.316
+Claude Code 2.1.307 or newer works; main-model review needs 2.1.316
 or newer. Tested: 2.1.316 and 2.1.319. Newer releases run, marked untested.
 
 The individual commands remain available:
@@ -158,46 +158,28 @@ sessions can add `--resume`. Explicit non-Auto modes require omitting
 decisions to native policy (a review already in flight still applies its
 verdict). Existing deny/ask rules remain effective.
 
-For an autonomous goal, type this inside the session (it is the client's
-replacement for native `/goal`, checked by the main model with no 30-second
-deadline):
+For goals, use Anthropic's native controller inside Claude:
 
 ```text
-/ggoal all tests pass and the README documents the new flag
-/ggoal status
-/ggoal clear
-/ggoal resume
+/goal all tests pass and the README documents the new flag
+/goal
+/goal clear
 ```
 
-The goal binds to the conversation it was typed in; `/ggoal resume` moves it
-to the current one (for example after `/clear`). Or write the condition to
-`GOAL.md` and start with it:
+`--local-controls` now adds only main-model permission review. It does not
+install a Stop hook, UserPromptSubmit goal hook, or `/ggoal` plugin. User-defined
+hooks remain intact. Native Claude owns goal activation, continuation, completion
+and supported session recovery. Previous ggrun goal-state files are retained but
+are not evaluated or silently imported. `--goal-file` and the `ggrun-client goal`
+CLI are retired; put the work brief in a file and use a short native completion
+condition (native conditions have a 4,000-character limit).
 
-```sh
-ggrun-client claude --connection server --local-controls --control-timeout 30m --goal-file GOAL.md
-```
-
-Tell Claude to read GOAL.md and start. Both are the client's persistent goal
-controller, **not native `/goal`**, whose short deadline is unchanged. From
-another terminal in the same project:
-
-```sh
-ggrun-client goal status --connection server
-ggrun-client goal clear --connection server
-ggrun-client goal resume --connection server
-ggrun-client goal set --connection server --file GOAL.md
-```
-
-An unmet verdict continues work; a complete verdict records completion. A
-failed check continues work and checks again at the next stop; three failures
-in a row pause the goal without claiming success. Clear/replacement
-cancels an in-flight check. Resume preserves the condition and verified session.
-Native Stop continuation caps still apply when the agent repeatedly makes no
-tool progress; the saved goal is not marked complete when that cap stops a turn.
-Long-context checks can take several minutes. Review quality still depends on
-the selected model. Custom input-rewriting hooks and large workflows require
-their own workload qualification; a simple live task is not proof of every
-workflow. No user settings files are overwritten.
+The native evaluator in inspected Claude Code 2.1.323 still uses a 30-second
+prompt-hook default. `--control-timeout` controls ggrun's permission reviewer,
+**not that native timer**. General API timeouts and relay keepalives do not extend
+it. Do not describe this migration as a fixed native timeout or promise that a
+cold slow main-model check will finish. That requires separate live qualification
+and an upstream timeout override or demonstrated latency improvement.
 
 ### Connection health and status line
 

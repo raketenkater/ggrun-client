@@ -623,7 +623,7 @@ func controlArgs(args []string, name string, timeout time.Duration) ([]string, e
 	if runtime.GOOS == "windows" {
 		hook["shell"] = "powershell"
 	}
-	for _, event := range []string{"PreToolUse", "Stop", "UserPromptSubmit"} {
+	for _, event := range []string{"PreToolUse"} {
 		rows := []any{}
 		if v, ok := hooks[event]; ok {
 			var valid bool
@@ -680,11 +680,7 @@ func controlArgs(args []string, name string, timeout time.Duration) ([]string, e
 	} else {
 		args = append([]string{"--settings", settingsPath}, args...)
 	}
-	pluginDir := base + ".plugin"
-	if e = writeControlPlugin(pluginDir); e != nil {
-		return nil, e
-	}
-	return append([]string{"--plugin-dir", pluginDir}, args...), nil
+	return args, nil
 }
 
 // permanentGoalError marks errors that a retry cannot fix.

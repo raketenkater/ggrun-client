@@ -51,7 +51,7 @@ func TestTUIStartsNewSessionWithSavedSettings(t *testing.T) {
 	m.Update(statusMsg{"server", serverState{name: "server", ok: true, status: "ready", model: "fixture", ctx: 262144}})
 	m.Update(claudeMsg{controlsClaudeVersion, true})
 	v := m.View()
-	for _, want := range []string{"server", "ready", "fixture", "256k context", "New session in", "/ggoal"} {
+	for _, want := range []string{"server", "ready", "fixture", "256k context", "New session in", "/goal"} {
 		if !strings.Contains(v, want) {
 			t.Fatalf("view lacks %q:\n%s", want, v)
 		}
@@ -119,7 +119,7 @@ func TestTUIResumesRecentProjectsAndCyclesReview(t *testing.T) {
 	m.action = tuiAction{}
 	for _, want := range []string{"on · timeout 60m", "off", "on · timeout 10m"} {
 		pick(t, m, "Main-model review")
-		if !strings.Contains(m.View(), "Main-model review and /ggoal: "+want) {
+		if !strings.Contains(m.View(), "Main-model review: "+want) {
 			t.Fatalf("review setting not %q:\n%s", want, m.View())
 		}
 	}

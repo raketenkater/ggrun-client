@@ -66,7 +66,7 @@ func run(args []string) error {
 	case "workflow-hook":
 		return workflowHook(os.Stdin, os.Stdout)
 	case "goal":
-		return goalCommand(args[1:])
+		return fmt.Errorf("ggrun goal commands are retired; use Anthropic native /goal and /goal clear inside Claude")
 	case "control-hook":
 		fs := flag.NewFlagSet("control-hook", flag.ContinueOnError)
 		name := fs.String("connection", "default", "saved connection")
@@ -106,8 +106,7 @@ func usage() {
   ggrun-client connect URL [--name default] [--allow-http] [--token-stdin]
   ggrun-client doctor [--name default]
   ggrun-client claude [--connection default] [--resume [SESSION_ID]] [--local-controls] [-- CLAUDE_ARGS...]
-  ggrun-client goal set --connection default --file GOAL.md
-  ggrun-client goal status|resume|clear --connection default
+  In Claude: /goal CONDITION, /goal, /goal clear
   ggrun-client forget [--name default]
 
 Run claude from your laptop project directory. Files, tools and sessions stay

@@ -22,7 +22,7 @@ import (
 
 // Claude Code versions. targetClaudeVersion is the oldest release the
 // connector supports; controlsClaudeVersion is the oldest with the hook and
-// plugin behavior main-model review and /ggoal need. Newer releases run with
+// plugin behavior main-model review need. Newer releases run with
 // a warning: if one changes hook semantics, review fails closed (blocks the
 // tool) rather than approving anything.
 const (
@@ -31,7 +31,7 @@ const (
 )
 
 // qualifiedClaude reports a release this client was live-tested on
-// (2.1.319: main-model review + /ggoal, 2026-11-06).
+// (2.1.319: main-model review, 2026-11-06).
 func qualifiedClaude(v string) bool {
 	return v == targetClaudeVersion || v == controlsClaudeVersion || v == "2.1.319"
 }
@@ -235,8 +235,8 @@ func launch(args []string) error {
 	if err != nil {
 		return err
 	}
-	if o.goalFile != "" && !o.localControls {
-		return fmt.Errorf("--goal-file requires --local-controls")
+	if o.goalFile != "" {
+		return fmt.Errorf("--goal-file belongs to the retired ggrun goal controller; start Claude and use native /goal <condition> instead")
 	}
 	if err = transportConflict(); err != nil {
 		return err
@@ -257,7 +257,7 @@ func launch(args []string) error {
 		return err
 	}
 	if o.localControls && !claudeAtLeast(v, controlsClaudeVersion) && !o.allowUntested {
-		return fmt.Errorf("main-model review and /ggoal need Claude Code %s or newer; update with claude install %s", controlsClaudeVersion, controlsClaudeVersion)
+		return fmt.Errorf("main-model review need Claude Code %s or newer; update with claude install %s", controlsClaudeVersion, controlsClaudeVersion)
 	}
 	if !qualifiedClaude(v) {
 		fmt.Fprintf(os.Stderr, "[ggrun-client] Claude Code %s is newer than the tested %s; it should work, and the status line marks it untested.\n", v, controlsClaudeVersion)
@@ -301,7 +301,7 @@ func launch(args []string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Fprintln(os.Stderr, "[ggrun-client] Main-model control review enabled. Use ggrun-client goal set --file GOAL.md for persistent goals; native /goal retains its short deadline.")
+		fmt.Fprintln(os.Stderr, "[ggrun-client] Main-model Auto review enabled. Goals use native /goal; no ggrun Stop hook or /ggoal plugin is installed.")
 	}
 	if o.resuming {
 		childArgs = append([]string{"--resume", s.ID}, childArgs...)
@@ -315,11 +315,6 @@ func launch(args []string) error {
 			cwd = resolved
 		}
 		s.Dir = cwd
-	}
-	if o.goalFile != "" {
-		if err = setGoalForSession(o.name, s, o.goalFile); err != nil {
-			return err
-		}
 	}
 	fmt.Fprintf(os.Stderr, "[ggrun-client] %s · %d tokens/slot · Claude %s · tools/files in current directory\n", p.ModelName, p.ContextPerSlot, v)
 	resolved, _ := filepath.EvalSymlinks(path)

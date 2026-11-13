@@ -23,16 +23,13 @@ func TestControlSettingsPreservePolicyAndUsePortableHooks(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if args[0] != "--plugin-dir" || args[2] != "--settings" || strings.HasPrefix(strings.TrimSpace(args[3]), "{") {
-		t.Fatalf("settings must be passed as a private file and plugin first: %q", args[:4])
+	if args[0] != "--settings" || hasFlag(args, "--plugin-dir") {
+		t.Fatalf("native goal launch must not install a ggrun plugin: %q", args)
 	}
-	if info, err := os.Stat(args[3]); err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0600) {
-		t.Fatal("merged settings file is not private")
+	if info, err := os.Stat(args[1]); err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0600) {
+		t.Fatal("settings not private")
 	}
-	if _, err := os.Stat(filepath.Join(args[1], "skills", "ggoal", "SKILL.md")); err != nil {
-		t.Fatal("ggoal skill missing")
-	}
-	raw3, _ := os.ReadFile(args[3])
+	raw3, _ := os.ReadFile(args[1])
 	var settings map[string]json.RawMessage
 	if json.Unmarshal(raw3, &settings) != nil {
 		t.Fatal("invalid settings")
@@ -44,10 +41,10 @@ func TestControlSettingsPreservePolicyAndUsePortableHooks(t *testing.T) {
 	if json.Unmarshal(settings["hooks"], &hooks) != nil {
 		t.Fatal("invalid hooks")
 	}
-	if len(hooks["PreToolUse"]) != 2 || len(hooks["Stop"]) != 1 || len(hooks["UserPromptSubmit"]) != 1 {
+	if len(hooks["PreToolUse"]) != 2 || len(hooks["Stop"]) != 0 || len(hooks["UserPromptSubmit"]) != 0 {
 		t.Fatal("user hook lost or control hooks missing")
 	}
-	for _, event := range []string{"PreToolUse", "Stop", "UserPromptSubmit"} {
+	for _, event := range []string{"PreToolUse"} {
 		row := hooks[event][len(hooks[event])-1]
 		h := row["hooks"].([]any)[0].(map[string]any)
 		if h["timeout"] != float64(210) || h["onFailure"] != "block" || !strings.Contains(h["command"].(string), "--goal-state") {
@@ -58,6 +55,30 @@ func TestControlSettingsPreservePolicyAndUsePortableHooks(t *testing.T) {
 		if _, e := controlArgs([]string{bad}, "fixture", time.Minute); e == nil {
 			t.Fatal("accepted disabled evidence", bad)
 		}
+	}
+}
+
+func TestNativeGoalMigrationPreservesUserStopHooks(t *testing.T) {
+	home(t)
+	args, err := controlArgs([]string{"--settings", `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"user-completion-check"}]}]}}`, "--permission-mode", "auto"}, "fixture", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasFlag(args, "--plugin-dir") {
+		t.Fatal("custom goal plugin installed")
+	}
+	b, err := os.ReadFile(args[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings struct {
+		Hooks map[string][]map[string]any `json:"hooks"`
+	}
+	if json.Unmarshal(b, &settings) != nil {
+		t.Fatal("invalid settings")
+	}
+	if len(settings.Hooks["Stop"]) != 1 || !strings.Contains(string(b), "user-completion-check") || len(settings.Hooks["UserPromptSubmit"]) != 0 {
+		t.Fatal("native migration altered user goal policy")
 	}
 }
 

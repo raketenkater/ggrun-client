@@ -304,7 +304,7 @@ func (m *tuiModel) rebuild() {
 	if m.settings.Controls {
 		review = "on · timeout " + m.settings.Timeout
 	}
-	add("Main-model review and /ggoal: "+review, func(m *tuiModel) tea.Cmd {
+	add("Main-model review: "+review, func(m *tuiModel) tea.Cmd {
 		switch {
 		case !m.settings.Controls:
 			m.settings.Controls, m.settings.Timeout = true, timeoutChoices[0]
@@ -541,7 +541,7 @@ func (m *tuiModel) View() string {
 	if m.message != "" {
 		b.WriteString("\n" + m.message + "\n")
 	}
-	b.WriteString("\n" + dimStyle.Render("↑/↓ move · Enter select · r refresh · q quit · in Claude use /ggoal <condition> for goals") + "\n")
+	b.WriteString("\n" + dimStyle.Render("↑/↓ move · Enter select · r refresh · q quit · in Claude use /goal <condition> for goals") + "\n")
 	return b.String()
 }
 

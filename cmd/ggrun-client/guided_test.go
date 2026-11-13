@@ -115,7 +115,7 @@ func TestGuidedFirstRunConnectsWaitsInstallsAndLaunches(t *testing.T) {
 	if len(g.launched) != 1 || strings.Join(g.launched[0], " ") != "--connection default --local-controls --control-timeout 30m" {
 		t.Fatalf("launch args: %v", g.launched)
 	}
-	if !strings.Contains(out.String(), "/ggoal") {
+	if !strings.Contains(out.String(), "/goal") {
 		t.Fatal("goal command not explained")
 	}
 }
