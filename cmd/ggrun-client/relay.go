@@ -47,13 +47,15 @@ func remoteTransport() *http.Transport {
 
 // relayRequest is one Claude request seen by the local relay.
 type relayRequest struct {
-	ID        int       `json:"id"`
-	Path      string    `json:"path"`
-	Started   time.Time `json:"started"`
-	Headers   time.Time `json:"headers,omitzero"`
-	LastByte  time.Time `json:"last_byte,omitzero"`
-	Bytes     int64     `json:"bytes"`
-	StatusTag int       `json:"status,omitempty"`
+	ID           int       `json:"id"`
+	Path         string    `json:"path"`
+	Started      time.Time `json:"started"`
+	Headers      time.Time `json:"headers,omitzero"`
+	LastByte     time.Time `json:"last_byte,omitzero"`
+	Bytes        int64     `json:"bytes"`
+	StatusTag    int       `json:"status,omitempty"`
+	Phase        string    `json:"phase,omitempty"`
+	LastProgress time.Time `json:"last_progress,omitzero"`
 }
 
 // relayState is written for the status line. It holds no credentials.
@@ -65,6 +67,8 @@ type relayState struct {
 	Qualified      bool           `json:"qualified"`
 	InFlight       []relayRequest `json:"in_flight,omitempty"`
 	Completed      int            `json:"completed"`
+	Canceled       int            `json:"canceled"`
+	LastOutcome    string         `json:"last_outcome,omitempty"`
 	LastCompleted  time.Time      `json:"last_completed,omitzero"`
 	LastError      string         `json:"last_error,omitempty"`
 	LastErrorAt    time.Time      `json:"last_error_at,omitzero"`
@@ -81,6 +85,7 @@ type relay struct {
 	server   *http.Server
 	listener net.Listener
 	done     chan struct{}
+	policy   relayPolicy
 }
 
 func relayStatePath(name string) (string, error) {
@@ -94,6 +99,10 @@ func relayStatePath(name string) (string, error) {
 // startRelay serves Claude Code on loopback and forwards to the gateway.
 // Authorization comes from Claude's own request; the relay adds nothing.
 func startRelay(target string, statePath string, info relayState) (*relay, error) {
+	policy, err := relayPolicyFromEnv()
+	if err != nil {
+		return nil, err
+	}
 	u, err := url.Parse(target)
 	if err != nil || u.Host == "" {
 		return nil, fmt.Errorf("invalid gateway URL")
@@ -114,6 +123,7 @@ func startRelay(target string, statePath string, info relayState) (*relay, error
 	}
 	r := &relay{active: map[int]*relayRequest{}, path: statePath, dirty: make(chan struct{}, 1), listener: ln, done: make(chan struct{})}
 	r.state = info
+	r.policy = policy
 	r.state.PID = os.Getpid()
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
@@ -129,7 +139,7 @@ func startRelay(target string, statePath string, info relayState) (*relay, error
 			// The tracking transport has already recorded the failure.
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadGateway)
-			_ = json.NewEncoder(w).Encode(map[string]any{"type": "error", "error": map[string]string{"type": "api_error", "message": "ggrun-client lost the connection to the server; retrying is safe"}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"type": "error", "error": map[string]string{"type": "api_error", "message": "ggrun-client request failed; inspect session state before retrying interrupted tool work"}})
 		},
 	}
 	r.server = &http.Server{Handler: proxy, ReadHeaderTimeout: 10 * time.Second}
@@ -210,7 +220,7 @@ func (r *relay) persist() {
 func (r *relay) begin(path string) *relayRequest {
 	r.mu.Lock()
 	r.next++
-	q := &relayRequest{ID: r.next, Path: path, Started: time.Now()}
+	q := &relayRequest{ID: r.next, Path: path, Started: time.Now(), Phase: "unknown"}
 	r.active[q.ID] = q
 	r.mu.Unlock()
 	r.mark()
@@ -231,13 +241,20 @@ func (r *relay) end(q *relayRequest, err error) {
 		return
 	}
 	delete(r.active, q.ID)
-	if err == nil {
+	if errors.Is(err, context.Canceled) {
+		r.state.Canceled++
+		r.state.LastOutcome = "canceled"
+	} else if err == nil {
+		r.state.LastOutcome = "complete"
 		r.state.Completed++
 		r.state.LastCompleted = time.Now()
 		r.state.ConsecutiveErr = 0
 	}
 	r.mu.Unlock()
-	if err != nil {
+	if err != nil && !errors.Is(err, context.Canceled) {
+		r.mu.Lock()
+		r.state.LastOutcome = "failed"
+		r.mu.Unlock()
 		r.fail(err)
 	}
 	r.mark()
@@ -259,51 +276,113 @@ type trackingTransport struct {
 
 func (t *trackingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	q := t.r.begin(req.URL.Path)
+	ctx, cancel := context.WithCancelCause(req.Context())
+	req = req.Clone(ctx)
+	done := make(chan struct{})
+	var once sync.Once
+	finish := func(err error) {
+		once.Do(func() {
+			close(done)
+			if cause := context.Cause(ctx); cause != nil {
+				err = cause
+			}
+			t.r.end(q, err)
+			cancel(context.Canceled)
+		})
+	}
+	go t.r.watch(q, ctx, cancel, done)
 	resp, err := t.base.RoundTrip(req)
 	if err != nil {
-		if req.Context().Err() != nil {
-			t.r.end(q, nil) // Claude cancelled its own request.
-		} else {
-			t.r.end(q, err)
-		}
+		finish(err)
 		return nil, err
 	}
 	t.r.update(q, func(q *relayRequest) { q.Headers = time.Now(); q.StatusTag = resp.StatusCode })
-	resp.Body = &trackedBody{ReadCloser: resp.Body, q: q, r: t.r, ctx: req.Context()}
+	resp.Body = &trackedBody{ReadCloser: resp.Body, q: q, r: t.r, finishRequest: finish, stream: streamContentType(resp.Header.Get("Content-Type")), status: resp.StatusCode}
 	return resp, nil
 }
 
 type trackedBody struct {
 	io.ReadCloser
-	q    *relayRequest
-	r    *relay
-	ctx  context.Context
-	once sync.Once
+	q             *relayRequest
+	r             *relay
+	finishRequest func(error)
+	stream        bool
+	status        int
+	parser        sseProgress
 }
 
 func (b *trackedBody) Read(p []byte) (int, error) {
 	n, err := b.ReadCloser.Read(p)
 	if n > 0 {
-		b.r.update(b.q, func(q *relayRequest) { q.Bytes += int64(n); q.LastByte = time.Now() })
+		progress := false
+		if b.stream {
+			progress = b.parser.feed(p[:n])
+		}
+		b.r.update(b.q, func(q *relayRequest) {
+			q.Bytes += int64(n)
+			q.LastByte = time.Now()
+			if b.parser.generated && q.Phase != "generation" {
+				q.Phase = "generation"
+				q.LastProgress = time.Now()
+			}
+			if progress {
+				q.LastProgress = time.Now()
+			}
+		})
 	}
 	if err != nil {
-		b.finish(err)
+		terminal := err
+		if errors.Is(err, io.EOF) {
+			terminal = nil
+			if b.status >= 400 {
+				terminal = fmt.Errorf("upstream HTTP %d", b.status)
+			} else if b.stream && (!b.parser.stopped || b.parser.failed) {
+				terminal = fmt.Errorf("upstream stream ended without a successful message_stop")
+				err = io.ErrUnexpectedEOF
+			}
+		}
+		b.finishRequest(terminal)
 	}
 	return n, err
 }
 
 func (b *trackedBody) Close() error {
-	b.finish(nil)
+	b.finishRequest(context.Canceled)
 	return b.ReadCloser.Close()
 }
 
-func (b *trackedBody) finish(err error) {
-	b.once.Do(func() {
-		if errors.Is(err, io.EOF) || b.ctx.Err() != nil {
-			err = nil
+func (r *relay) watch(q *relayRequest, ctx context.Context, cancel context.CancelCauseFunc, done <-chan struct{}) {
+	interval := time.Second
+	for _, d := range []time.Duration{r.policy.GenerationIdle, r.policy.Startup} {
+		if d > 0 && d/4 < interval {
+			interval = d / 4
 		}
-		b.r.end(b.q, err)
-	})
+	}
+	if interval < time.Millisecond {
+		interval = time.Millisecond
+	}
+	tick := time.NewTicker(interval)
+	defer tick.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-ctx.Done():
+			return
+		case now := <-tick.C:
+			r.mu.Lock()
+			phase, last, start := q.Phase, q.LastProgress, q.Started
+			r.mu.Unlock()
+			budget, since := r.policy.Startup, start
+			if phase == "generation" {
+				budget, since = r.policy.GenerationIdle, last
+			}
+			if budget > 0 && now.Sub(since) >= budget {
+				cancel(fmt.Errorf("ggrun-client %s progress budget exceeded (%s); upstream canceled", phase, budget))
+				return
+			}
+		}
+	}
 }
 
 func readRelayState(path string) (relayState, error) {

@@ -166,6 +166,7 @@ func TestRelayStreamsAndTracksBytes(t *testing.T) {
 			w.(http.Flusher).Flush()
 			time.Sleep(50 * time.Millisecond)
 		}
+		io.WriteString(w, messageStop)
 	}))
 	state := filepath.Join(t.TempDir(), "relay.json")
 	rl, err := startRelay(gw.URL, state, relayState{})
