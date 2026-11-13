@@ -88,7 +88,7 @@ func TestGoalSetClearResumePreserveCondition(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if e = saveSession(sp, session{ID: "session", ModelID: "model", Context: 262144, Version: 1, Controls: true}); e != nil {
+	if e = saveSession(sp, session{ID: "session", ModelID: "model", Context: 262144, Version: 1, Controls: true, Goals: true}); e != nil {
 		t.Fatal(e)
 	}
 	file := filepath.Join(t.TempDir(), "GOAL.md")
@@ -322,7 +322,7 @@ func ggoalEvent(prompt, session, mode string) string {
 func TestGgoalPromptSetsStatusResumesAndClears(t *testing.T) {
 	home(t)
 	sp, _ := sessionPath("fixture")
-	if e := saveSession(sp, session{ID: "launch", ModelID: "model", Context: 262144, Version: 1, Controls: true}); e != nil {
+	if e := saveSession(sp, session{ID: "launch", ModelID: "model", Context: 262144, Version: 1, Controls: true, Goals: true}); e != nil {
 		t.Fatal(e)
 	}
 	path, _ := goalFile("fixture")

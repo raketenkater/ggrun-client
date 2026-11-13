@@ -1,5 +1,37 @@
 # Native goal reliability: implementation and acceptance record
 
+## Follow-up: client issue #18
+
+After the initial findings below, the owner explicitly requested fixing client
+issue #18 and filing server work in the main repository. The client now offers
+`--goal-only --goal-file FILE` for its existing longer-budget completion
+controller, independently of optional `--tool-review` (`--local-controls` alias).
+`--no-tool-review` overrides that alias. This is an explicitly selected client
+controller, not a native `/goal` timeout fix. No `/ggoal` plugin is installed.
+
+The TUI and guided start leave extra review off by default; old ambiguous
+`controls` preferences do not imply consent to enable review. A selected TUI
+goal file supplies an initial work instruction. Native rules and user hooks
+survive; reviewer failures never become allow decisions. A new/resumed launch
+with a goal file binds it to the selected session. Lifecycle commands remain
+available for the client controller; native goals keep their own lifecycle.
+
+Native child-launch fixtures verify Stop-only configuration, bounded evaluator
+budget, fresh/resumed binding, explicit review opt-in, override behavior, and
+user permission preservation. These execute the client and a fixture child,
+not the real model. Existing goal tests verify unmet/met/error verdict handling.
+No live tool-heavy acceptance or release has been claimed for these changes;
+the owner is separately testing native `/goal` on the existing client.
+
+Server follow-ups filed with evidence and acceptance criteria:
+
+- https://github.com/raketenkater/ggrun/issues/127 — schema and thinking adapter compatibility.
+- https://github.com/raketenkater/ggrun/issues/128 — request-correlated progress and backend cancellation.
+
+The remainder records the earlier native-goal investigation, before this
+explicitly requested optional-controller change. Its failed native acceptance
+and lack of production deployment remain valid.
+
 ## Result
 
 Native `/goal` acceptance FAILED. Do not release or describe this branch as a

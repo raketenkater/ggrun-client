@@ -94,7 +94,7 @@ func writeGoal(path string, g goalRecord) error {
 }
 
 func setGoalForSession(name string, s session, file string) error {
-	if s.ID == "" || s.ModelID == "" || !s.Controls {
+	if s.ID == "" || s.ModelID == "" || (!s.Controls && !s.Goals) {
 		return fmt.Errorf("goal requires a verified session")
 	}
 	f, e := os.Open(file)
@@ -167,14 +167,14 @@ func goalCommand(args []string) error {
 			if json.Unmarshal(raw, &s) != nil || s.ID == "" {
 				return fmt.Errorf("invalid verified session")
 			}
-			if !s.Controls {
-				return fmt.Errorf("this verified session was not launched with --local-controls")
+			if !s.Goals {
+				return fmt.Errorf("this session has no client goal hook; launch with --goal-only --goal-file FILE or use native /goal")
 			}
 			g := goalRecord{Version: 1, Session: s.ID, Model: s.ModelID, Condition: condition, State: "active", Revision: fmt.Sprint(time.Now().UnixNano())}
 			if e = writeGoal(path, g); e != nil {
 				return e
 			}
-			fmt.Println("Goal active; it will be evaluated when the current turn finishes. Use --local-controls on this client session.")
+			fmt.Println("Client goal active; it will be evaluated when the current turn finishes.")
 			return nil
 		}
 		g, e := readGoal(path)
@@ -192,6 +192,18 @@ func goalCommand(args []string) error {
 		case "clear":
 			g.State = "cleared"
 		case "resume":
+			sp, err := sessionPath(*name)
+			if err != nil {
+				return err
+			}
+			raw, err := clientkit.ReadPrivate(sp)
+			if err != nil {
+				return err
+			}
+			var s session
+			if json.Unmarshal(raw, &s) != nil || !s.Goals || s.ID != g.Session || s.ModelID != g.Model {
+				return fmt.Errorf("goal belongs to another session or no goal hook is installed; relaunch with --goal-only --goal-file FILE")
+			}
 			g.State = "active"
 		default:
 			return fmt.Errorf("unknown goal command %q", action)
@@ -202,6 +214,9 @@ func goalCommand(args []string) error {
 			return e
 		}
 		fmt.Println("Goal", g.State)
+		if action == "resume" {
+			fmt.Println("If Claude is idle, send it a message to start the next turn; this command does not start one.")
+		}
 		return nil
 	})
 }
@@ -396,7 +411,7 @@ func localGoalHook(name string, timeout time.Duration, path string, input review
 		return json.NewEncoder(out).Encode(map[string]string{"decision": "block", "reason": "User-configured goal: " + g.Condition + "\nGoal is not complete: " + verdict.Reason})
 	}
 	if verdict.Decision == "ask" {
-		return json.NewEncoder(out).Encode(map[string]any{"systemMessage": "[ggrun-client] Goal paused: " + verdict.Reason + " (/ggoal resume to continue)"})
+		return json.NewEncoder(out).Encode(map[string]any{"systemMessage": "[ggrun-client] Goal paused: " + verdict.Reason + " (use ggrun-client goal resume from this project to continue)"})
 	}
 	if verdict.Decision == "allow" {
 		return json.NewEncoder(out).Encode(map[string]any{"systemMessage": "[ggrun-client] Goal complete: " + verdict.Reason})
@@ -554,6 +569,12 @@ func writeControlPlugin(dir string) error {
 }
 
 func controlArgs(args []string, name string, timeout time.Duration) ([]string, error) {
+	return configuredControlArgs(args, name, timeout, []string{"PreToolUse"})
+}
+
+// Goal continuation and optional per-tool review must never implicitly enable
+// each other. Both use the same private settings merge and bounded hook policy.
+func configuredControlArgs(args []string, name string, timeout time.Duration, events []string) ([]string, error) {
 	mode := ""
 	for i, a := range args {
 		if a == "--permission-mode" && i+1 < len(args) {
@@ -623,7 +644,7 @@ func controlArgs(args []string, name string, timeout time.Duration) ([]string, e
 	if runtime.GOOS == "windows" {
 		hook["shell"] = "powershell"
 	}
-	for _, event := range []string{"PreToolUse"} {
+	for _, event := range events {
 		rows := []any{}
 		if v, ok := hooks[event]; ok {
 			var valid bool

@@ -176,22 +176,23 @@ CI exercises the actual child launch with a native fixture executable and no
 Tailscale or model download. It does not substitute for a real laptop coding task.
 # Main-model controls (alpha.5)
 
-For a backend-only server and Claude Code on another computer, install alpha.5
-on the **client computer**. This mode uses the main model for reviews, without a
-second model or native Auto's short classifier deadline. Requires Claude Code
-2.1.316. It remains an opt-in deployment mode; other native versions and all
-model/hardware combinations are not qualified by this deployment's tests.
+Extra ggrun tool review is optional and independent of goal continuation.
+It uses the main model and requires Claude Code 2.1.316 or newer. Native
+permission rules still apply; this does not remove all native classifier
+deadlines. New TUI and guided launches leave extra review off unless selected.
+The old ambiguous `controls` setting no longer implicitly enables review;
+re-enable it through the TUI if wanted.
 
 ```sh
 claude install 2.1.316
 ggrun-client connect https://YOUR-SERVER --name server
-ggrun-client claude --connection server --local-controls --control-timeout 30m
+ggrun-client claude --connection server --tool-review --control-timeout 30m
 ```
 
 Run the client in your working project. Tools, files, hooks and goal state stay
 on that computer. The backend serves the model API only. Existing verified
 sessions can add `--resume`. Explicit non-Auto modes require omitting
-`--local-controls`; changing mode inside Claude returns later permission
+`--tool-review` (legacy alias `--local-controls`); changing mode inside Claude returns later permission
 decisions to native policy (a review already in flight still applies its
 verdict). Existing deny/ask rules remain effective.
 
@@ -203,16 +204,29 @@ For goals, use Anthropic's native controller inside Claude:
 /goal clear
 ```
 
-`--local-controls` now adds only main-model permission review. It does not
-install a Stop hook, UserPromptSubmit goal hook, or `/ggoal` plugin. User-defined
-hooks remain intact. Native Claude owns goal activation, continuation, completion
-and supported session recovery. Previous ggrun goal-state files are retained but
-are not evaluated or silently imported. `--goal-file` and the `ggrun-client goal`
-CLI are retired; put the work brief in a file and use a short native completion
-condition (native conditions have a 4,000-character limit).
+For the explicitly selected client completion controller with a longer budget:
+
+```sh
+ggrun-client claude --connection server --goal-only --goal-file GOAL.md --control-timeout 30m
+```
+
+Then give Claude the task in that session. In the TUI, selecting a client goal
+file also supplies an initial instruction to read it and begin. Goal selection
+does not enable extra tool review. `--no-tool-review` explicitly disables the
+extra reviewer even when the legacy `--local-controls` flag is supplied.
+Native permissions, user hooks and deny/ask rules remain effective.
+
+The client controller installs a Stop hook; it does not install `/ggoal` or a
+UserPromptSubmit hook. Do not also activate native `/goal` in that session.
+From the same project directory, `ggrun-client goal status`, `goal clear` and
+`goal resume` manage the client condition. Resume requires the same verified
+session with the client hook; a new launch with `--goal-file` explicitly binds
+that file to the selected new/resumed session. Native and client goal state are
+separate. Client conditions are limited to 16384 bytes; native conditions to
+4000 characters. Keep longer work briefs in a separate file.
 
 The native evaluator in inspected Claude Code 2.1.323 still uses a 30-second
-prompt-hook default. `--control-timeout` controls ggrun's permission reviewer,
+prompt-hook default. `--control-timeout` controls ggrun's optional reviewer and client goal evaluator,
 **not that native timer**. General API timeouts and relay keepalives do not extend
 it. Do not describe this migration as a fixed native timeout or promise that a
 cold slow main-model check will finish. That requires separate live qualification

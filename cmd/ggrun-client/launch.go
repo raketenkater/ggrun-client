@@ -114,6 +114,7 @@ type launchOptions struct {
 	localControls           bool
 	controlTimeout          time.Duration
 	goalFile                string
+	goalOnly, noToolReview  bool
 }
 
 func launchOptionsFor(args []string) (launchOptions, error) {
@@ -131,8 +132,12 @@ func launchOptionsFor(args []string) (launchOptions, error) {
 			o.name = args[i]
 		case "--allow-untested-claude":
 			o.allowUntested = true
-		case "--local-controls":
+		case "--local-controls", "--tool-review":
 			o.localControls = true
+		case "--goal-only":
+			o.goalOnly = true
+		case "--no-tool-review":
+			o.noToolReview = true
 		case "--goal-file":
 			i++
 			if i == len(args) {
@@ -167,6 +172,7 @@ type session struct {
 	Context     int
 	Version     int
 	Controls    bool `json:"controls,omitempty"`
+	Goals       bool `json:"goals,omitempty"`
 	// Dir lets the client TUI list and resume recent projects from anywhere.
 	Dir string `json:"dir,omitempty"`
 }
@@ -235,8 +241,11 @@ func launch(args []string) error {
 	if err != nil {
 		return err
 	}
-	if o.goalFile != "" {
-		return fmt.Errorf("--goal-file belongs to the retired ggrun goal controller; start Claude and use native /goal <condition> instead")
+	if o.goalOnly && o.goalFile == "" {
+		return fmt.Errorf("--goal-only requires --goal-file FILE; use native /goal inside Claude for native goals")
+	}
+	if o.goalOnly || o.noToolReview {
+		o.localControls = false
 	}
 	if err = transportConflict(); err != nil {
 		return err
@@ -260,7 +269,7 @@ func launch(args []string) error {
 	if err != nil {
 		return err
 	}
-	if o.localControls && !claudeAtLeast(v, controlsClaudeVersion) && !o.allowUntested {
+	if (o.localControls || o.goalFile != "") && !claudeAtLeast(v, controlsClaudeVersion) && !o.allowUntested {
 		return fmt.Errorf("main-model review need Claude Code %s or newer; update with claude install %s", controlsClaudeVersion, controlsClaudeVersion)
 	}
 	if !qualifiedClaude(v) {
@@ -305,7 +314,14 @@ func launch(args []string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Fprintln(os.Stderr, "[ggrun-client] Main-model Auto review enabled. Goals use native /goal; no ggrun Stop hook or /ggoal plugin is installed.")
+		fmt.Fprintln(os.Stderr, "[ggrun-client] Optional extra ggrun main-model tool review enabled.")
+	}
+	if o.goalFile != "" {
+		childArgs, err = configuredControlArgs(childArgs, o.name, o.controlTimeout, []string{"Stop"})
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(os.Stderr, "[ggrun-client] Client goal controller enabled; do not also activate native /goal. Extra ggrun tool review:", o.localControls)
 	}
 	if o.resuming {
 		childArgs = append([]string{"--resume", s.ID}, childArgs...)
@@ -314,6 +330,7 @@ func launch(args []string) error {
 		childArgs = append([]string{"--session-id", s.ID}, childArgs...)
 	}
 	s.Controls = o.localControls
+	s.Goals = o.goalFile != ""
 	if cwd, err := os.Getwd(); err == nil {
 		if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
 			cwd = resolved
@@ -328,6 +345,13 @@ func launch(args []string) error {
 	}
 	defer rl.Close()
 	cmd := exec.Command(path, childArgs...)
+	if s.Goals {
+		// Bind the condition to the actual selected new/resumed session before
+		// Claude can emit its first Stop event. Never reuse a stale goal binding.
+		if err = setGoalForSession(o.name, s, o.goalFile); err != nil {
+			return err
+		}
+	}
 	// Claude talks to the loopback relay, which detects a dead server path in
 	// about a minute and fails the request so Claude retries on a new
 	// connection. Unknown queue/prefill silence stays unbounded by default;
@@ -342,6 +366,22 @@ func launch(args []string) error {
 	release := holdInterrupt()
 	defer release()
 	if err = cmd.Start(); err != nil {
+		if s.Goals {
+			if path, e := goalFile(o.name); e == nil {
+				_ = withGoalLock(path, func() error {
+					g, e := readGoal(path)
+					if e != nil {
+						return e
+					}
+					if g.Session == s.ID {
+						g.State = "paused"
+						g.Reason = "Claude did not start; relaunch the client with the goal file."
+						return writeGoal(path, g)
+					}
+					return nil
+				})
+			}
+		}
 		return fmt.Errorf("start Claude Code: %w", err)
 	}
 	if err = saveSession(sessionFile, s); err != nil {

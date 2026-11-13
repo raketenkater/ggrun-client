@@ -18,7 +18,7 @@ import (
 
 // clientSettings are the few persistent launch choices. No secrets.
 type clientSettings struct {
-	Controls      bool   `json:"controls"`
+	Controls      bool   `json:"tool_review"`
 	Timeout       string `json:"timeout"`
 	AllowUntested bool   `json:"allow_untested,omitempty"`
 	Server        string `json:"server,omitempty"` // last selected connection
@@ -32,7 +32,7 @@ func settingsPath() (string, error) {
 }
 
 func loadSettings() clientSettings {
-	s := clientSettings{Controls: true, Timeout: "30m"}
+	s := clientSettings{Controls: false, Timeout: "30m"}
 	if p, err := settingsPath(); err == nil {
 		if b, err := os.ReadFile(p); err == nil {
 			_ = json.Unmarshal(b, &s)
@@ -125,6 +125,7 @@ type tuiModel struct {
 	items    []menuItem
 	input    textinput.Model
 	inputFor string // add-url, add-token, token
+	goalFile string // explicit per-launch choice; never carried into another project
 	pending  string // URL being added
 	message  string
 	action   tuiAction
@@ -243,10 +244,21 @@ func (m *tuiModel) launchArgs(conn string, resume bool) []string {
 	if resume {
 		args = append(args, "--resume")
 	}
+	if m.goalFile != "" {
+		args = append(args, "--goal-file", m.goalFile)
+		if !m.settings.Controls {
+			args = append(args, "--goal-only")
+		}
+		args = append(args, "--", "Read the user-selected completion condition file "+m.goalFile+" and work toward it. Verify the result with actual evidence. The client completion controller is active; do not activate native /goal as well.")
+	}
 	return args
 }
 
 func (m *tuiModel) startAction(a tuiAction) tea.Cmd {
+	if a.kind == "launch" && a.dir != "" && a.dir != m.cwd && m.goalFile != "" {
+		m.message = "Clear the selected client goal before resuming another project."
+		return nil
+	}
 	m.action = a
 	if s := m.server(); s != nil {
 		m.settings.Server = s.name
@@ -262,6 +274,13 @@ func (m *tuiModel) rebuild() {
 	s := m.server()
 	if s != nil {
 		conn := s.name
+		goal := "none (native /goal available)"
+		if m.goalFile != "" {
+			goal = tildePath(m.goalFile)
+		}
+		add("Client goal file: "+goal, func(m *tuiModel) tea.Cmd {
+			return m.prompt("goal-file", "Goal condition file; empty clears this launch choice", false)
+		})
 		add("New session in "+tildePath(m.cwd), func(m *tuiModel) tea.Cmd {
 			if !m.server().ok {
 				m.message = "Server is not ready: " + m.server().status
@@ -352,6 +371,31 @@ func (m *tuiModel) submit(value string) tea.Cmd {
 	kind := m.inputFor
 	m.inputFor = ""
 	switch kind {
+	case "goal-file":
+		if value == "" {
+			m.goalFile = ""
+			m.message = "Client goal disabled; native /goal available."
+			return nil
+		}
+		path, err := filepath.Abs(value)
+		if err != nil {
+			m.message = err.Error()
+			return nil
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			m.message = err.Error()
+			return nil
+		}
+		st, err := f.Stat()
+		f.Close()
+		if err != nil || !st.Mode().IsRegular() || st.Size() == 0 || st.Size() > 16384 {
+			m.message = "Goal condition must be a regular file containing 1–16384 bytes."
+			return nil
+		}
+		m.goalFile = path
+		m.message = "Client goal selected. Do not also activate native /goal in that session."
+		return nil
 	case "customize":
 		if s := m.server(); s != nil {
 			if err := importCustomization(s.name, value); err != nil {
