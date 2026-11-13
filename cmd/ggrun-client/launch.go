@@ -245,6 +245,10 @@ func launch(args []string) error {
 	if err != nil {
 		return err
 	}
+	o.args, err = customizedArgs(o.name, o.args)
+	if err != nil {
+		return err
+	}
 	p, err := inspect(c)
 	if err != nil {
 		return err
@@ -326,7 +330,8 @@ func launch(args []string) error {
 	cmd := exec.Command(path, childArgs...)
 	// Claude talks to the loopback relay, which detects a dead server path in
 	// about a minute and fails the request so Claude retries on a new
-	// connection. The model itself may stay silent for as long as it needs.
+	// connection. Unknown queue/prefill silence stays unbounded by default;
+	// identified generation has a separate semantic-progress idle budget.
 	cmd.Env = withLoopbackNoProxy(p.Environment(rl.URL(), c.Token, os.Environ()))
 	// Versions are qualified per release; an in-session auto-update would run
 	// an untested Claude on the next launch.

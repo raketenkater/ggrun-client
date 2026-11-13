@@ -296,6 +296,9 @@ func (m *tuiModel) rebuild() {
 	}
 	add("Add server…", func(m *tuiModel) tea.Cmd { return m.prompt("add-url", "Server URL (https://…)", false) })
 	if s != nil {
+		add("Import customizations for "+s.name+"…", func(m *tuiModel) tea.Cmd {
+			return m.prompt("customize", "Path to customization JSON (plugins, MCP, prompt, permissions)", false)
+		})
 		add("Update token for "+s.name+"…", func(m *tuiModel) tea.Cmd {
 			return m.prompt("token", "Gateway token (on the server: ggrun gateway-token)", true)
 		})
@@ -349,6 +352,15 @@ func (m *tuiModel) submit(value string) tea.Cmd {
 	kind := m.inputFor
 	m.inputFor = ""
 	switch kind {
+	case "customize":
+		if s := m.server(); s != nil {
+			if err := importCustomization(s.name, value); err != nil {
+				m.message = "Not saved: " + err.Error()
+			} else {
+				m.message = "Customizations saved for " + s.name + "; applied on new and resumed launches."
+			}
+		}
+		return nil
 	case "add-url":
 		base, err := clientkit.BaseURL(value, false)
 		if err != nil {

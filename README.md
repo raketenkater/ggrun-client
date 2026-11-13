@@ -1,5 +1,42 @@
 # ggrun-client
 
+### Request progress and saved customizations
+
+The relay distinguishes received bytes from model output. Once an Anthropic
+stream identifies generation, three minutes without text, thinking, or tool-input
+progress cancels that request. SSE heartbeats do not reset this clock. Override
+with `GGRUN_GENERATION_IDLE_TIMEOUT=10m`, or `0` to disable. This is an idle
+budget, not a maximum generation duration.
+
+Before generation, the relay reports progress as unknown. It cannot infer which
+request is progressing from aggregate server status. Queueing and cold prefill
+therefore have no default deadline; an optional
+`GGRUN_REQUEST_STARTUP_TIMEOUT=30m` applies an explicit policy limit. These
+variables must be set in the environment that starts ggrun-client. The relay
+cancels upstream work but does not replay requests. Native Claude retry or pause
+behavior still needs qualification for your workflow. A native `/goal` check has
+its own deadline; neither relay setting extends it.
+
+Import per-connection launch choices from a JSON file through the TUI's
+“Import customizations” action, or:
+
+```sh
+ggrun-client customize --name default --file launch.json
+```
+
+Supported fields are `plugin_dirs` (array of absolute directory paths),
+`mcp_config` (absolute path to an existing MCP file), `append_system_prompt`, and
+`permission_mode` (`auto`, `default`, `acceptEdits`, or `plan`). Use `{}` to clear
+saved choices. MCP credentials stay in the referenced file. Saved choices apply
+to both new sessions and resume; explicit Claude flags override saved MCP,
+prompt, and permission values. Explicit plugin directories extend the saved
+list. If main-model controls are enabled, the effective permission mode must
+remain `auto`; disable controls in the TUI when choosing another mode.
+
+This branch's native-goal migration and progress handling are under validation.
+The native evaluator timeout remains a known acceptance blocker; source tests
+are not evidence of a released, fully autonomous workflow.
+
 Run Claude Code in your laptop's project while
 [ggrun](https://github.com/raketenkater/ggrun) serves the local model on another
 computer. The server owns inference and scheduling. Your laptop owns files,

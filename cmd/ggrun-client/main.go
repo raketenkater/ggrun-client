@@ -61,6 +61,17 @@ func run(args []string) error {
 		return connect(args[1:])
 	case "doctor":
 		return doctor(args[1:])
+	case "customize":
+		fs := flag.NewFlagSet("customize", flag.ContinueOnError)
+		name := fs.String("name", "default", "saved connection")
+		file := fs.String("file", "", "customization JSON file")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *file == "" || fs.NArg() != 0 {
+			return fmt.Errorf("use customize --name CONNECTION --file FILE.json")
+		}
+		return importCustomization(*name, *file)
 	case "claude":
 		return launch(args[1:])
 	case "workflow-hook":
@@ -105,6 +116,7 @@ func usage() {
   ggrun-client start           the same as plain prompts (no full-screen UI)
   ggrun-client connect URL [--name default] [--allow-http] [--token-stdin]
   ggrun-client doctor [--name default]
+  ggrun-client customize --name default --file FILE.json
   ggrun-client claude [--connection default] [--resume [SESSION_ID]] [--local-controls] [-- CLAUDE_ARGS...]
   In Claude: /goal CONDITION, /goal, /goal clear
   ggrun-client forget [--name default]

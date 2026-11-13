@@ -1,7 +1,6 @@
 package main
 
-// This command is an experimental control adapter. It is deliberately not
-// installed by clientArgs until native-policy and real-model qualification.
+// Main-model Auto review adapter, installed by controlArgs when requested.
 import (
 	"bytes"
 	"context"
