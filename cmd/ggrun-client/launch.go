@@ -169,6 +169,7 @@ func launchOptionsFor(args []string) (launchOptions, error) {
 
 type session struct {
 	ID, ModelID string
+	RunID       string `json:"run_id,omitempty"`
 	Context     int
 	Version     int
 	Controls    bool `json:"controls,omitempty"`
@@ -262,6 +263,19 @@ func launch(args []string) error {
 	if err != nil {
 		return err
 	}
+	for _, role := range []struct {
+		enabled, goal bool
+		label         string
+	}{{o.goalFile != "", true, "Client goal evaluator"}, {o.localControls, false, "Extra tool reviewer"}} {
+		if !role.enabled {
+			continue
+		}
+		target, e := selectedControlTarget(o.name, p, role.goal)
+		if e != nil {
+			return e
+		}
+		fmt.Fprintf(os.Stderr, "[ggrun-client] %s: %s, %d tokens; server may fall back to main: %t\n", role.label, target.alias, target.context, target.fallback)
+	}
 	if err = settingsConflict(c, p, o.args); err != nil {
 		return err
 	}
@@ -279,6 +293,11 @@ func launch(args []string) error {
 	if err != nil {
 		return err
 	}
+	lease, err := acquireSessionLease(sessionFile)
+	if err != nil {
+		return err
+	}
+	defer lease.Close()
 	var s session
 	if o.resuming {
 		s, err = resumedSession(sessionFile, o.resume, p)
@@ -288,6 +307,11 @@ func launch(args []string) error {
 	if err != nil {
 		return err
 	}
+	run, err := newSession(p)
+	if err != nil {
+		return err
+	}
+	s.RunID = run.ID
 	// Prevent CLI overrides from invalidating model/context/session assumptions.
 	for _, a := range o.args {
 		k, _, _ := strings.Cut(a, "=")
@@ -314,10 +338,10 @@ func launch(args []string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Fprintln(os.Stderr, "[ggrun-client] Optional extra ggrun main-model tool review enabled.")
+		fmt.Fprintln(os.Stderr, "[ggrun-client] Optional extra ggrun tool review enabled.")
 	}
 	if o.goalFile != "" {
-		childArgs, err = configuredControlArgs(childArgs, o.name, o.controlTimeout, []string{"Stop"})
+		childArgs, err = configuredControlArgs(childArgs, o.name, o.controlTimeout, []string{"Stop", "StopFailure"}, s.RunID)
 		if err != nil {
 			return err
 		}
@@ -351,12 +375,21 @@ func launch(args []string) error {
 		if err = setGoalForSession(o.name, s, o.goalFile); err != nil {
 			return err
 		}
+		defer func() {
+			if e := pauseGoal(sessionFile+".goal", s.ID, s.RunID, "Client session ended; relaunch with the goal file to continue."); e != nil {
+				fmt.Fprintln(os.Stderr, "[ggrun-client] could not persist goal pause:", e)
+			}
+		}()
 	}
 	// Claude talks to the loopback relay, which detects a dead server path in
 	// about a minute and fails the request so Claude retries on a new
 	// connection. Unknown queue/prefill silence stays unbounded by default;
 	// identified generation has a separate semantic-progress idle budget.
 	cmd.Env = withLoopbackNoProxy(p.Environment(rl.URL(), c.Token, os.Environ()))
+	cmd.Env, err = applyWorkflowSettingsCapacity(cmd.Env, p, o.args)
+	if err != nil {
+		return err
+	}
 	// Versions are qualified per release; an in-session auto-update would run
 	// an untested Claude on the next launch.
 	cmd.Env = append(cmd.Env, "DISABLE_AUTOUPDATER=1")
@@ -365,27 +398,11 @@ func launch(args []string) error {
 	cmd.Stderr = os.Stderr
 	release := holdInterrupt()
 	defer release()
-	if err = cmd.Start(); err != nil {
-		if s.Goals {
-			if path, e := goalFile(o.name); e == nil {
-				_ = withGoalLock(path, func() error {
-					g, e := readGoal(path)
-					if e != nil {
-						return e
-					}
-					if g.Session == s.ID {
-						g.State = "paused"
-						g.Reason = "Claude did not start; relaunch the client with the goal file."
-						return writeGoal(path, g)
-					}
-					return nil
-				})
-			}
-		}
-		return fmt.Errorf("start Claude Code: %w", err)
-	}
 	if err = saveSession(sessionFile, s); err != nil {
-		fmt.Fprintln(os.Stderr, "[ggrun-client] session metadata could not be saved; verified resume will be unavailable:", err)
+		return fmt.Errorf("save verified session before launch: %w", err)
+	}
+	if err = cmd.Start(); err != nil {
+		return fmt.Errorf("start Claude Code: %w", err)
 	}
 	err = cmd.Wait()
 	if err != nil {

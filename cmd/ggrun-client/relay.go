@@ -370,19 +370,30 @@ func (r *relay) watch(q *relayRequest, ctx context.Context, cancel context.Cance
 		case <-ctx.Done():
 			return
 		case now := <-tick.C:
-			r.mu.Lock()
-			phase, last, start := q.Phase, q.LastProgress, q.Started
-			r.mu.Unlock()
-			budget, since := r.policy.Startup, start
-			if phase == "generation" {
-				budget, since = r.policy.GenerationIdle, last
-			}
-			if budget > 0 && now.Sub(since) >= budget {
-				cancel(fmt.Errorf("ggrun-client %s progress budget exceeded (%s); upstream canceled", phase, budget))
+			if r.expire(q, now, cancel) {
 				return
 			}
 		}
 	}
+}
+
+// Serialize the expiry decision with progress and completion. A snapshot taken
+// before a token arrived must not cancel that newly progressing request.
+func (r *relay) expire(q *relayRequest, now time.Time, cancel context.CancelCauseFunc) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.active[q.ID] != q {
+		return false
+	}
+	budget, since := r.policy.Startup, q.Started
+	if q.Phase == "generation" {
+		budget, since = r.policy.GenerationIdle, q.LastProgress
+	}
+	if budget > 0 && now.Sub(since) >= budget {
+		cancel(fmt.Errorf("ggrun-client %s progress budget exceeded (%s); upstream canceled", q.Phase, budget))
+		return true
+	}
+	return false
 }
 
 func readRelayState(path string) (relayState, error) {

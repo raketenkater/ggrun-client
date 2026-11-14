@@ -83,13 +83,14 @@ func run(args []string) error {
 		name := fs.String("connection", "default", "saved connection")
 		timeout := fs.Duration("timeout", 10*time.Minute, "control budget")
 		state := fs.String("goal-state", "", "private goal state path")
+		runID := fs.String("run-id", "", "verified launch identity")
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
 		if fs.NArg() != 0 {
 			return fmt.Errorf("unexpected control-hook arguments")
 		}
-		return localControlHook(*name, *timeout, *state, os.Stdin, os.Stdout)
+		return localControlHook(*name, *timeout, *state, os.Stdin, os.Stdout, *runID)
 	case "experimental-review-hook":
 		fs := flag.NewFlagSet("experimental-review-hook", flag.ContinueOnError)
 		name := fs.String("name", "default", "saved connection")
@@ -186,6 +187,9 @@ func request(ctx context.Context, c connection, path string, out any) error {
 	cl := http.Client{Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, err := cl.Do(req)
 	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return errUnreachable
 	}
 	defer resp.Body.Close()
@@ -213,14 +217,18 @@ func request(ctx context.Context, c connection, path string, out any) error {
 	return nil
 }
 func inspect(c connection) (clientkit.Profile, error) {
+	return inspectContext(context.Background(), c)
+}
+
+func inspectContext(ctx context.Context, c connection) (clientkit.Profile, error) {
 	var p clientkit.Profile
-	if err := request(context.Background(), c, "/ggrun/client", &p); err != nil {
+	if err := request(ctx, c, "/ggrun/client", &p); err != nil {
 		return p, err
 	}
 	if err := p.Validate(); err != nil {
 		return p, err
 	}
-	return p, request(context.Background(), c, "/health", nil)
+	return p, request(ctx, c, "/health", nil)
 }
 func connect(args []string) error {
 	fs := flag.NewFlagSet("connect", flag.ContinueOnError)

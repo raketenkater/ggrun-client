@@ -88,6 +88,11 @@ func TestGoalSetClearResumePreserveCondition(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
+	lease, e := acquireSessionLease(sp)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer lease.Close()
 	if e = saveSession(sp, session{ID: "session", ModelID: "model", Context: 262144, Version: 1, Controls: true, Goals: true}); e != nil {
 		t.Fatal(e)
 	}

@@ -118,8 +118,8 @@ func TestTUIResumesRecentProjectsAndCyclesReview(t *testing.T) {
 	// Review is opt-in, then cycles through bounded budgets.
 	m.action = tuiAction{}
 	for _, want := range []string{"on · timeout 10m", "on · timeout 30m", "on · timeout 60m", "off", "on · timeout 10m"} {
-		pick(t, m, "Main-model review")
-		if !strings.Contains(m.View(), "Main-model review: "+want) {
+		pick(t, m, "Extra tool review")
+		if !strings.Contains(m.View(), "Extra tool review: "+want) {
 			t.Fatalf("review setting not %q:\n%s", want, m.View())
 		}
 	}

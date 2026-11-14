@@ -326,7 +326,7 @@ func (m *tuiModel) rebuild() {
 	if m.settings.Controls {
 		review = "on · timeout " + m.settings.Timeout
 	}
-	add("Main-model review: "+review, func(m *tuiModel) tea.Cmd {
+	add("Extra tool review: "+review, func(m *tuiModel) tea.Cmd {
 		switch {
 		case !m.settings.Controls:
 			m.settings.Controls, m.settings.Timeout = true, timeoutChoices[0]

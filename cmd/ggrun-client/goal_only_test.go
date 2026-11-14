@@ -58,6 +58,9 @@ func TestGoalOnlyLaunchBindsWithoutToolReview(t *testing.T) {
 		if len(settings.Hooks["Stop"]) != 1 || settings.Hooks["Stop"][0].Hooks[0].Timeout != 630 {
 			t.Fatalf("goal missing bounded Stop: %s", b)
 		}
+		if len(settings.Hooks["StopFailure"]) != 1 || !strings.Contains(settings.Hooks["Stop"][0].Hooks[0].Command, "--run-id") {
+			t.Fatal("goal hooks do not track failures and launch ownership")
+		}
 		for _, h := range settings.Hooks["PreToolUse"] {
 			if h.Matcher == ".*" {
 				t.Fatal("goal-only installed per-tool review")
@@ -69,7 +72,7 @@ func TestGoalOnlyLaunchBindsWithoutToolReview(t *testing.T) {
 		json.Unmarshal(sb, &s)
 		gp, _ := goalFile("default")
 		g, err := readGoal(gp)
-		if err != nil || g.Session != s.ID || s.Controls || !s.Goals || g.State != "active" {
+		if err != nil || g.Session != s.ID || s.Controls || !s.Goals || g.State != "paused" || g.RunID == "" || g.RunID != s.RunID {
 			t.Fatalf("goal binding: %+v %+v %v", s, g, err)
 		}
 	}

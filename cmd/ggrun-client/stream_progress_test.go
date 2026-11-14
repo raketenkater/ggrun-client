@@ -90,12 +90,14 @@ func TestRelayGenerationStallCancelsUpstream(t *testing.T) {
 }
 
 func TestRelaySlowPrefillAndSteadyGeneration(t *testing.T) {
-	t.Setenv("GGRUN_GENERATION_IDLE_TIMEOUT", "100ms")
+	// Exercise real HTTP framing with enough margin for race-enabled CI runners.
+	// Precise deadline/renewal boundaries are tested without wall-clock sleeps below.
+	t.Setenv("GGRUN_GENERATION_IDLE_TIMEOUT", "1s")
 	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		io.WriteString(w, "event: ping\ndata: {\"type\":\"ping\"}\n\n")
 		w.(http.Flusher).Flush()
-		time.Sleep(250 * time.Millisecond) // unknown prefill exceeds generation budget
+		time.Sleep(1200 * time.Millisecond) // unknown prefill exceeds generation budget
 		io.WriteString(w, generationStart)
 		for range 8 {
 			io.WriteString(w, textDelta)
@@ -110,7 +112,7 @@ func TestRelaySlowPrefillAndSteadyGeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rl.Close()
-	cl := &http.Client{Timeout: 2 * time.Second}
+	cl := &http.Client{Timeout: 10 * time.Second}
 	resp, err := cl.Post(rl.URL()+"/v1/messages", "application/json", strings.NewReader("{}"))
 	if err != nil {
 		t.Fatal(err)
@@ -123,6 +125,40 @@ func TestRelaySlowPrefillAndSteadyGeneration(t *testing.T) {
 	}
 	if s := rl.snapshot(); s.Completed != 1 || s.ConsecutiveErr != 0 {
 		t.Fatalf("healthy stream: %+v", s)
+	}
+}
+
+func TestRelayDeadlineTransitions(t *testing.T) {
+	start := time.Now()
+	r := &relay{active: map[int]*relayRequest{}, dirty: make(chan struct{}, 1), policy: relayPolicy{GenerationIdle: time.Second}}
+	q := &relayRequest{ID: 1, Started: start, Phase: "unknown"}
+	r.active[q.ID] = q
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	if r.expire(q, start.Add(time.Hour), cancel) {
+		t.Fatal("unknown prefill consumed generation budget")
+	}
+	r.update(q, func(q *relayRequest) { q.Phase = "generation"; q.LastProgress = start.Add(time.Hour) })
+	for i := 1; i <= 10; i++ {
+		now := start.Add(time.Hour + time.Duration(i)*500*time.Millisecond)
+		if r.expire(q, now, cancel) {
+			t.Fatal("progressing generation expired")
+		}
+		r.update(q, func(q *relayRequest) { q.LastProgress = now })
+	}
+	if r.expire(q, q.LastProgress.Add(time.Second-time.Nanosecond), cancel) || ctx.Err() != nil {
+		t.Fatal("expired before idle budget")
+	}
+	// LastByte (including a heartbeat) must not renew the semantic deadline.
+	r.update(q, func(q *relayRequest) { q.LastByte = q.LastProgress.Add(time.Second) })
+	if !r.expire(q, q.LastByte, cancel) || ctx.Err() == nil {
+		t.Fatal("heartbeat masked generation stall")
+	}
+	ctx2, cancel2 := context.WithCancelCause(context.Background())
+	defer cancel2(nil)
+	delete(r.active, q.ID)
+	if r.expire(q, start.Add(24*time.Hour), cancel2) || ctx2.Err() != nil {
+		t.Fatal("completed request canceled by stale watchdog tick")
 	}
 }
 

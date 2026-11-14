@@ -151,13 +151,23 @@ func evaluateReview(ctx context.Context, c connection, evidence []byte) (reviewV
 }
 
 func evaluateControl(ctx context.Context, c connection, evidence []byte, policy string) (reviewVerdict, error) {
+	return evaluateControlTarget(ctx, c, evidence, policy, controlTarget{alias: c.Profile.MainAlias, context: c.Profile.ContextPerSlot})
+}
+
+func evaluateControlTarget(ctx context.Context, c connection, evidence []byte, policy string, target controlTarget) (reviewVerdict, error) {
+	return retryControl(ctx, func() (reviewVerdict, error) {
+		return evaluateControlOnce(ctx, c, evidence, policy, target)
+	})
+}
+
+func evaluateControlOnce(ctx context.Context, c connection, evidence []byte, policy string, target controlTarget) (reviewVerdict, error) {
 	var verdict reviewVerdict
 	// Rough token estimate; the backend still rejects a real overflow.
-	if c.Profile.ContextPerSlot > 0 && len(evidence)/4+len(policy)/4+4096 > c.Profile.ContextPerSlot {
-		return verdict, fmt.Errorf("control evidence (~%d tokens) exceeds the %d-token model context; run /compact and retry", len(evidence)/4, c.Profile.ContextPerSlot)
+	if target.context > 0 && len(evidence)/4+len(policy)/4+4096 > target.context {
+		return verdict, fmt.Errorf("control evidence (~%d tokens) exceeds the %d-token model context; run /compact and retry", len(evidence)/4, target.context)
 	}
 	body, err := json.Marshal(map[string]any{
-		"model": c.Profile.MainAlias, "max_tokens": 2048, "stream": false,
+		"model": target.alias, "max_tokens": 2048, "stream": false,
 		"thinking": map[string]string{"type": "disabled"},
 		// llama.cpp's Anthropic translation in some bundled forks ignores
 		// thinking.type=disabled but passes template kwargs through correctly.
@@ -180,6 +190,15 @@ func evaluateControl(ctx context.Context, c connection, evidence []byte, policy 
 	if err != nil {
 		return verdict, err
 	}
+	verdict, err = parseControlVerdict(b)
+	if err != nil {
+		return reviewVerdict{}, &controlFailure{kind: "invalid_verdict", retry: true, cause: err}
+	}
+	return verdict, nil
+}
+
+func parseControlVerdict(b []byte) (reviewVerdict, error) {
+	var verdict reviewVerdict
 	var message struct {
 		Stop    string `json:"stop_reason"`
 		Content []struct {
@@ -288,7 +307,7 @@ func mainReviewHook(name string, timeout time.Duration, in io.Reader, out io.Wri
 	if err != nil {
 		return err
 	}
-	p, err := inspect(c)
+	p, err := inspectContext(ctx, c)
 	if err != nil {
 		return err
 	}
@@ -299,7 +318,11 @@ func mainReviewHook(name string, timeout time.Duration, in io.Reader, out io.Wri
 	if c.Profile.MainAlias == "" {
 		return fmt.Errorf("connection has no main-model alias")
 	}
-	verdict, err := evaluateReview(ctx, c, evidence)
+	target, err := selectedControlTarget(name, p, false)
+	if err != nil {
+		return err
+	}
+	verdict, err := evaluateControlTarget(ctx, c, evidence, reviewPolicy, target)
 	if err != nil {
 		return err
 	}
@@ -326,14 +349,14 @@ func waitReviewEvidence(ctx context.Context, input reviewInput) ([]byte, error) 
 	return evidence, err
 }
 
-// postControl sends one control request. A connection lost before a response
-// is retried once on a fresh connection: the transport fails a dead path in
-// about a minute, and the review must not block a tool for that alone.
+// postControl sends one read-only evaluator request. retryControl owns the
+// single bounded retry policy; do not multiply attempts in the transport.
 func postControl(ctx context.Context, c connection, body []byte) ([]byte, error) {
 	// The review can wait many minutes for the first byte while the model
 	// prefills; the transport's liveness probes, not a deadline, catch a dead path.
 	cl := &http.Client{Transport: remoteTransport(), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	for attempt := 0; ; attempt++ {
+	defer cl.CloseIdleConnections()
+	{
 		req, err := http.NewRequestWithContext(ctx, "POST", c.URL+"/v1/messages", bytes.NewReader(body))
 		if err != nil {
 			return nil, fmt.Errorf("invalid review endpoint")
@@ -350,23 +373,21 @@ func postControl(ctx context.Context, c connection, body []byte) ([]byte, error)
 		resp, err := cl.Do(req)
 		if err != nil {
 			if ctx.Err() != nil {
-				return nil, fmt.Errorf("main-model review unavailable or cancelled")
+				return nil, fmt.Errorf("control request canceled: %w", ctx.Err())
 			}
-			if attempt == 0 {
-				continue
-			}
-			return nil, fmt.Errorf("main-model review lost the server connection twice; no approval issued")
+			return nil, &controlFailure{kind: "transport", retry: true, cause: fmt.Errorf("control request lost the server connection; no approval issued")}
 		}
 		b, readErr := io.ReadAll(io.LimitReader(resp.Body, (64<<10)+1))
 		resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("main-model review returned HTTP %d; no approval issued", resp.StatusCode)
+			retry := resp.StatusCode == 408 || resp.StatusCode == 429 || (resp.StatusCode >= 500 && resp.StatusCode <= 599 && resp.StatusCode != 501 && resp.StatusCode != 505)
+			return nil, &controlFailure{kind: "http", retry: retry, cause: fmt.Errorf("control request returned HTTP %d; no approval issued", resp.StatusCode)}
 		}
 		if readErr != nil {
-			if ctx.Err() == nil && attempt == 0 {
-				continue
+			if ctx.Err() != nil {
+				return nil, fmt.Errorf("control request canceled: %w", ctx.Err())
 			}
-			return nil, fmt.Errorf("main-model review response was cut off; no approval issued")
+			return nil, &controlFailure{kind: "transport", retry: true, cause: fmt.Errorf("control response was cut off; no approval issued")}
 		}
 		if len(b) > 64<<10 {
 			return nil, fmt.Errorf("invalid review response size")

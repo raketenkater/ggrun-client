@@ -216,14 +216,50 @@ does not enable extra tool review. `--no-tool-review` explicitly disables the
 extra reviewer even when the legacy `--local-controls` flag is supplied.
 Native permissions, user hooks and deny/ask rules remain effective.
 
-The client controller installs a Stop hook; it does not install `/ggoal` or a
+The client controller installs a Stop evaluator and a StopFailure notification
+hook; it does not install `/ggoal` or a
 UserPromptSubmit hook. Do not also activate native `/goal` in that session.
 From the same project directory, `ggrun-client goal status`, `goal clear` and
 `goal resume` manage the client condition. Resume requires the same verified
-session with the client hook; a new launch with `--goal-file` explicitly binds
+running session with the client hook; a new launch with `--goal-file` explicitly binds
 that file to the selected new/resumed session. Native and client goal state are
 separate. Client conditions are limited to 16384 bytes; native conditions to
 4000 characters. Keep longer work briefs in a separate file.
+
+Only one client launch may own a connection/project session at a time. Exiting
+the client pauses an unfinished goal. `goal status` detects a crashed launcher
+and marks stale active state as paused; `goal resume` cannot revive a dead
+session. A native API failure records a pause through StopFailure. That hook
+cannot start another turn: after resolving the error, resume the client goal
+and send Claude a message. Automatic recovery of aborted native turns remains
+unqualified.
+
+Read-only evaluator calls retry transient transport/server failures and invalid
+verdicts up to three attempts within the existing control timeout. Valid
+allow/deny/ask decisions are final; authentication and invalid-request errors do
+not retry. Repeated failed checks pause the goal, and invalid output never
+becomes approval or completion. Tool calls themselves are never replayed.
+
+To select custom control models independently, import a per-connection
+customization file through the TUI or `ggrun-client customize --name server
+--file customizations.json`, for example:
+
+```json
+{"goal_evaluator":"utility","tool_reviewer":"main"}
+```
+
+Both default to `main`; selecting a tool reviewer does not enable tool review.
+Utility selection requires a server advertising `utility_route` capacity.
+Evidence is checked against that route's conservative context, with no silent
+truncation. The launch message shows the alias and whether the server may fall
+back to main. These choices affect the custom client controls, not native
+`/goal` or native Auto classification. The server's existing native classifier
+policy can route requests independently of their requested alias.
+
+Workflow concurrency is capped to the selected executor's advertised capacity;
+a separate reviewer does not add main-model slots. A lower valid user limit is
+preserved. This limits fan-out but does not prove that every native Workflow or
+structured-output stage succeeds on the selected model.
 
 The native evaluator in inspected Claude Code 2.1.323 still uses a 30-second
 prompt-hook default. `--control-timeout` controls ggrun's optional reviewer and client goal evaluator,

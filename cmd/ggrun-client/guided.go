@@ -138,7 +138,7 @@ func guidedStart(in *bufio.Reader, out io.Writer) error {
 	}
 
 	args := []string{"--connection", name}
-	answer := strings.ToLower(ask("Enable extra ggrun main-model tool review? Native permissions remain active (y/N)", "N"))
+	answer := strings.ToLower(ask("Enable extra ggrun tool review? Native permissions remain active (y/N)", "N"))
 	if answer == "y" || answer == "yes" {
 		args = append(args, "--tool-review", "--control-timeout", "30m")
 	}

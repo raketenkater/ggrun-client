@@ -17,6 +17,8 @@ type customization struct {
 	MCPConfig          string   `json:"mcp_config,omitempty"`
 	AppendSystemPrompt string   `json:"append_system_prompt,omitempty"`
 	PermissionMode     string   `json:"permission_mode,omitempty"`
+	GoalEvaluator      string   `json:"goal_evaluator,omitempty"`
+	ToolReviewer       string   `json:"tool_reviewer,omitempty"`
 }
 
 func customizationPath(name string) (string, error) {
@@ -28,6 +30,11 @@ func customizationPath(name string) (string, error) {
 }
 
 func (c customization) validate() error {
+	for _, role := range []string{c.GoalEvaluator, c.ToolReviewer} {
+		if role != "" && role != "main" && role != "utility" {
+			return fmt.Errorf("goal_evaluator and tool_reviewer must be main or utility")
+		}
+	}
 	switch c.PermissionMode {
 	case "", "auto", "default", "acceptEdits", "plan":
 	default:
@@ -91,25 +98,33 @@ func importCustomization(name, file string) error {
 	return clientkit.ReplacePrivate(path, b)
 }
 
-func customizedArgs(name string, extra []string) ([]string, error) {
+func loadCustomization(name string) (customization, error) {
+	var c customization
 	path, err := customizationPath(name)
 	if err != nil {
-		return nil, err
+		return c, err
 	}
 	b, err := clientkit.ReadPrivate(path)
 	if os.IsNotExist(err) {
-		return extra, nil
+		return c, nil
 	}
 	if err != nil {
-		return nil, err
+		return c, err
 	}
-	var c customization
 	d := json.NewDecoder(bytes.NewReader(b))
 	d.DisallowUnknownFields()
 	if err = d.Decode(&c); err != nil {
-		return nil, fmt.Errorf("invalid saved customization")
+		return c, fmt.Errorf("invalid saved customization")
 	}
 	if err = c.validate(); err != nil {
+		return c, err
+	}
+	return c, nil
+}
+
+func customizedArgs(name string, extra []string) ([]string, error) {
+	c, err := loadCustomization(name)
+	if err != nil {
 		return nil, err
 	}
 	args := []string{}
