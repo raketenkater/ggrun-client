@@ -7,7 +7,7 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/x/term v0.2.2
-	github.com/raketenkater/ggrun/clientkit v0.0.0-20261027120216-e3b47b991081
+	github.com/raketenkater/ggrun/clientkit v0.0.0-20261113154638-b6cdd22114d8
 )
 
 require (

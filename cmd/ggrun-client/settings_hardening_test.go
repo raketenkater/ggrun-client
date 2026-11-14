@@ -5,6 +5,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/raketenkater/ggrun/clientkit"
 )
 
 func TestEmptySavedConnectionSettingsCannotClearVerifiedRoute(t *testing.T) {
@@ -27,6 +29,28 @@ func TestEmptySavedConnectionSettingsCannotClearVerifiedRoute(t *testing.T) {
 	err := settingsConflict(c, profile(), []string{"--settings", `{"env":{"ANTHROPIC_API_KEY":"","CLAUDE_CODE_USE_BEDROCK":"","MY_SETTING":""}}`})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestWorkflowSettingsCannotOvercommitUtilityExecutor(t *testing.T) {
+	home(t)
+	p := profile()
+	p.Slots = 4
+	p.UtilityRoute = &clientkit.UtilityRoute{ContextPerSlot: 8192, Slots: 1, SeparateBackend: true, FallbackToMain: true}
+	c := connection{URL: "http://127.0.0.1", Profile: p}
+	args := []string{"--settings", `{"env":{"CLAUDE_CODE_SUBAGENT_MODEL":"local-fast"}}`}
+	if err := settingsConflict(c, p, args); err != nil {
+		t.Fatal(err)
+	}
+	env, err := applyWorkflowSettingsCapacity(p.Environment(c.URL, "", nil), p, args)
+	if err != nil || !strings.Contains(strings.Join(env, "\n"), "CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS=1\n") {
+		t.Fatal("utility executor inherited main capacity", err)
+	}
+	for _, cap := range []string{"2", "0", "bad"} {
+		b, _ := json.Marshal(map[string]any{"env": map[string]string{"CLAUDE_CODE_SUBAGENT_MODEL": "local-fast", "CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS": cap}})
+		if err := settingsConflict(c, p, []string{"--settings", string(b)}); err == nil {
+			t.Fatalf("accepted invalid utility cap %q", cap)
+		}
 	}
 }
 

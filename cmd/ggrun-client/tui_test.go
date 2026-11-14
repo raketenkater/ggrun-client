@@ -51,7 +51,7 @@ func TestTUIStartsNewSessionWithSavedSettings(t *testing.T) {
 	m.Update(statusMsg{"server", serverState{name: "server", ok: true, status: "ready", model: "fixture", ctx: 262144}})
 	m.Update(claudeMsg{controlsClaudeVersion, true})
 	v := m.View()
-	for _, want := range []string{"server", "ready", "fixture", "256k context", "New session in", "/ggoal"} {
+	for _, want := range []string{"server", "ready", "fixture", "256k context", "New session in", "/goal"} {
 		if !strings.Contains(v, want) {
 			t.Fatalf("view lacks %q:\n%s", want, v)
 		}
@@ -60,7 +60,7 @@ func TestTUIStartsNewSessionWithSavedSettings(t *testing.T) {
 		t.Fatal("qualified Claude offered for install")
 	}
 	pick(t, m, "New session in")
-	if got := strings.Join(m.action.args, " "); m.action.kind != "launch" || got != "--connection server --local-controls --control-timeout 30m" {
+	if got := strings.Join(m.action.args, " "); m.action.kind != "launch" || got != "--connection server" {
 		t.Fatalf("launch: %+v", m.action)
 	}
 	if s := loadSettings(); s.Server != "server" {
@@ -115,11 +115,11 @@ func TestTUIResumesRecentProjectsAndCyclesReview(t *testing.T) {
 	if m.action.dir != otherResolved || m.action.args[len(m.action.args)-1] != "--resume" {
 		t.Fatalf("recent project: %+v", m.action)
 	}
-	// Review setting cycles 30m -> 60m -> off -> 10m and persists.
+	// Review is opt-in, then cycles through bounded budgets.
 	m.action = tuiAction{}
-	for _, want := range []string{"on · timeout 60m", "off", "on · timeout 10m"} {
-		pick(t, m, "Main-model review")
-		if !strings.Contains(m.View(), "Main-model review and /ggoal: "+want) {
+	for _, want := range []string{"on · timeout 10m", "on · timeout 30m", "on · timeout 60m", "off", "on · timeout 10m"} {
+		pick(t, m, "Extra tool review")
+		if !strings.Contains(m.View(), "Extra tool review: "+want) {
 			t.Fatalf("review setting not %q:\n%s", want, m.View())
 		}
 	}

@@ -1,5 +1,42 @@
 # ggrun-client
 
+### Request progress and saved customizations
+
+The relay distinguishes received bytes from model output. Once an Anthropic
+stream identifies generation, three minutes without text, thinking, or tool-input
+progress cancels that request. SSE heartbeats do not reset this clock. Override
+with `GGRUN_GENERATION_IDLE_TIMEOUT=10m`, or `0` to disable. This is an idle
+budget, not a maximum generation duration.
+
+Before generation, the relay reports progress as unknown. It cannot infer which
+request is progressing from aggregate server status. Queueing and cold prefill
+therefore have no default deadline; an optional
+`GGRUN_REQUEST_STARTUP_TIMEOUT=30m` applies an explicit policy limit. These
+variables must be set in the environment that starts ggrun-client. The relay
+cancels upstream work but does not replay requests. Native Claude retry or pause
+behavior still needs qualification for your workflow. A native `/goal` check has
+its own deadline; neither relay setting extends it.
+
+Import per-connection launch choices from a JSON file through the TUI's
+“Import customizations” action, or:
+
+```sh
+ggrun-client customize --name default --file launch.json
+```
+
+Supported fields are `plugin_dirs` (array of absolute directory paths),
+`mcp_config` (absolute path to an existing MCP file), `append_system_prompt`, and
+`permission_mode` (`auto`, `default`, `acceptEdits`, or `plan`). Use `{}` to clear
+saved choices. MCP credentials stay in the referenced file. Saved choices apply
+to both new sessions and resume; explicit Claude flags override saved MCP,
+prompt, and permission values. Explicit plugin directories extend the saved
+list. If main-model controls are enabled, the effective permission mode must
+remain `auto`; disable controls in the TUI when choosing another mode.
+
+This branch's native-goal migration and progress handling are under validation.
+The native evaluator timeout remains a known acceptance blocker; source tests
+are not evidence of a released, fully autonomous workflow.
+
 Run Claude Code in your laptop's project while
 [ggrun](https://github.com/raketenkater/ggrun) serves the local model on another
 computer. The server owns inference and scheduling. Your laptop owns files,
@@ -45,10 +82,10 @@ It opens a menu: add a server (URL + gateway token; on the server run
 `ggrun gateway-token`), see whether it is ready or still loading, start a new
 session here, resume the last one here or a recent project elsewhere, update a
 changed token, and toggle main-model review. When Claude exits you return to
-the menu. Inside the session, use `/ggoal <condition>` for long-running goals.
+the menu. Inside the session, use Anthropic’s native `/goal <condition>` for long-running goals.
 `ggrun-client start` asks the same questions as plain prompts.
 
-Claude Code 2.1.307 or newer works; main-model review and `/ggoal` need 2.1.316
+Claude Code 2.1.307 or newer works; main-model review needs 2.1.316
 or newer. Tested: 2.1.316 and 2.1.319. Newer releases run, marked untested.
 
 The individual commands remain available:
@@ -139,65 +176,97 @@ CI exercises the actual child launch with a native fixture executable and no
 Tailscale or model download. It does not substitute for a real laptop coding task.
 # Main-model controls (alpha.5)
 
-For a backend-only server and Claude Code on another computer, install alpha.5
-on the **client computer**. This mode uses the main model for reviews, without a
-second model or native Auto's short classifier deadline. Requires Claude Code
-2.1.316. It remains an opt-in deployment mode; other native versions and all
-model/hardware combinations are not qualified by this deployment's tests.
+Extra ggrun tool review is optional and independent of goal continuation.
+It uses the main model and requires Claude Code 2.1.316 or newer. Native
+permission rules still apply; this does not remove all native classifier
+deadlines. New TUI and guided launches leave extra review off unless selected.
+The old ambiguous `controls` setting no longer implicitly enables review;
+re-enable it through the TUI if wanted.
 
 ```sh
 claude install 2.1.316
 ggrun-client connect https://YOUR-SERVER --name server
-ggrun-client claude --connection server --local-controls --control-timeout 30m
+ggrun-client claude --connection server --tool-review --control-timeout 30m
 ```
 
 Run the client in your working project. Tools, files, hooks and goal state stay
 on that computer. The backend serves the model API only. Existing verified
 sessions can add `--resume`. Explicit non-Auto modes require omitting
-`--local-controls`; changing mode inside Claude returns later permission
+`--tool-review` (legacy alias `--local-controls`); changing mode inside Claude returns later permission
 decisions to native policy (a review already in flight still applies its
 verdict). Existing deny/ask rules remain effective.
 
-For an autonomous goal, type this inside the session (it is the client's
-replacement for native `/goal`, checked by the main model with no 30-second
-deadline):
+For goals, use Anthropic's native controller inside Claude:
 
 ```text
-/ggoal all tests pass and the README documents the new flag
-/ggoal status
-/ggoal clear
-/ggoal resume
+/goal all tests pass and the README documents the new flag
+/goal
+/goal clear
 ```
 
-The goal binds to the conversation it was typed in; `/ggoal resume` moves it
-to the current one (for example after `/clear`). Or write the condition to
-`GOAL.md` and start with it:
+For the explicitly selected client completion controller with a longer budget:
 
 ```sh
-ggrun-client claude --connection server --local-controls --control-timeout 30m --goal-file GOAL.md
+ggrun-client claude --connection server --goal-only --goal-file GOAL.md --control-timeout 30m
 ```
 
-Tell Claude to read GOAL.md and start. Both are the client's persistent goal
-controller, **not native `/goal`**, whose short deadline is unchanged. From
-another terminal in the same project:
+Then give Claude the task in that session. In the TUI, selecting a client goal
+file also supplies an initial instruction to read it and begin. Goal selection
+does not enable extra tool review. `--no-tool-review` explicitly disables the
+extra reviewer even when the legacy `--local-controls` flag is supplied.
+Native permissions, user hooks and deny/ask rules remain effective.
 
-```sh
-ggrun-client goal status --connection server
-ggrun-client goal clear --connection server
-ggrun-client goal resume --connection server
-ggrun-client goal set --connection server --file GOAL.md
+The client controller installs a Stop evaluator and a StopFailure notification
+hook; it does not install `/ggoal` or a
+UserPromptSubmit hook. Do not also activate native `/goal` in that session.
+From the same project directory, `ggrun-client goal status`, `goal clear` and
+`goal resume` manage the client condition. Resume requires the same verified
+running session with the client hook; a new launch with `--goal-file` explicitly binds
+that file to the selected new/resumed session. Native and client goal state are
+separate. Client conditions are limited to 16384 bytes; native conditions to
+4000 characters. Keep longer work briefs in a separate file.
+
+Only one client launch may own a connection/project session at a time. Exiting
+the client pauses an unfinished goal. `goal status` detects a crashed launcher
+and marks stale active state as paused; `goal resume` cannot revive a dead
+session. A native API failure records a pause through StopFailure. That hook
+cannot start another turn: after resolving the error, resume the client goal
+and send Claude a message. Automatic recovery of aborted native turns remains
+unqualified.
+
+Read-only evaluator calls retry transient transport/server failures and invalid
+verdicts up to three attempts within the existing control timeout. Valid
+allow/deny/ask decisions are final; authentication and invalid-request errors do
+not retry. Repeated failed checks pause the goal, and invalid output never
+becomes approval or completion. Tool calls themselves are never replayed.
+
+To select custom control models independently, import a per-connection
+customization file through the TUI or `ggrun-client customize --name server
+--file customizations.json`, for example:
+
+```json
+{"goal_evaluator":"utility","tool_reviewer":"main"}
 ```
 
-An unmet verdict continues work; a complete verdict records completion. A
-failed check continues work and checks again at the next stop; three failures
-in a row pause the goal without claiming success. Clear/replacement
-cancels an in-flight check. Resume preserves the condition and verified session.
-Native Stop continuation caps still apply when the agent repeatedly makes no
-tool progress; the saved goal is not marked complete when that cap stops a turn.
-Long-context checks can take several minutes. Review quality still depends on
-the selected model. Custom input-rewriting hooks and large workflows require
-their own workload qualification; a simple live task is not proof of every
-workflow. No user settings files are overwritten.
+Both default to `main`; selecting a tool reviewer does not enable tool review.
+Utility selection requires a server advertising `utility_route` capacity.
+Evidence is checked against that route's conservative context, with no silent
+truncation. The launch message shows the alias and whether the server may fall
+back to main. These choices affect the custom client controls, not native
+`/goal` or native Auto classification. The server's existing native classifier
+policy can route requests independently of their requested alias.
+
+Workflow concurrency is capped to the selected executor's advertised capacity;
+a separate reviewer does not add main-model slots. A lower valid user limit is
+preserved. This limits fan-out but does not prove that every native Workflow or
+structured-output stage succeeds on the selected model.
+
+The native evaluator in inspected Claude Code 2.1.323 still uses a 30-second
+prompt-hook default. `--control-timeout` controls ggrun's optional reviewer and client goal evaluator,
+**not that native timer**. General API timeouts and relay keepalives do not extend
+it. Do not describe this migration as a fixed native timeout or promise that a
+cold slow main-model check will finish. That requires separate live qualification
+and an upstream timeout override or demonstrated latency improvement.
 
 ### Connection health and status line
 

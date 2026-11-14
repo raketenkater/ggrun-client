@@ -22,7 +22,7 @@ import (
 
 // Claude Code versions. targetClaudeVersion is the oldest release the
 // connector supports; controlsClaudeVersion is the oldest with the hook and
-// plugin behavior main-model review and /ggoal need. Newer releases run with
+// plugin behavior main-model review need. Newer releases run with
 // a warning: if one changes hook semantics, review fails closed (blocks the
 // tool) rather than approving anything.
 const (
@@ -31,7 +31,7 @@ const (
 )
 
 // qualifiedClaude reports a release this client was live-tested on
-// (2.1.319: main-model review + /ggoal, 2026-11-06).
+// (2.1.319: main-model review, 2026-11-06).
 func qualifiedClaude(v string) bool {
 	return v == targetClaudeVersion || v == controlsClaudeVersion || v == "2.1.319"
 }
@@ -114,6 +114,7 @@ type launchOptions struct {
 	localControls           bool
 	controlTimeout          time.Duration
 	goalFile                string
+	goalOnly, noToolReview  bool
 }
 
 func launchOptionsFor(args []string) (launchOptions, error) {
@@ -131,8 +132,12 @@ func launchOptionsFor(args []string) (launchOptions, error) {
 			o.name = args[i]
 		case "--allow-untested-claude":
 			o.allowUntested = true
-		case "--local-controls":
+		case "--local-controls", "--tool-review":
 			o.localControls = true
+		case "--goal-only":
+			o.goalOnly = true
+		case "--no-tool-review":
+			o.noToolReview = true
 		case "--goal-file":
 			i++
 			if i == len(args) {
@@ -164,9 +169,11 @@ func launchOptionsFor(args []string) (launchOptions, error) {
 
 type session struct {
 	ID, ModelID string
+	RunID       string `json:"run_id,omitempty"`
 	Context     int
 	Version     int
 	Controls    bool `json:"controls,omitempty"`
+	Goals       bool `json:"goals,omitempty"`
 	// Dir lets the client TUI list and resume recent projects from anywhere.
 	Dir string `json:"dir,omitempty"`
 }
@@ -235,8 +242,11 @@ func launch(args []string) error {
 	if err != nil {
 		return err
 	}
-	if o.goalFile != "" && !o.localControls {
-		return fmt.Errorf("--goal-file requires --local-controls")
+	if o.goalOnly && o.goalFile == "" {
+		return fmt.Errorf("--goal-only requires --goal-file FILE; use native /goal inside Claude for native goals")
+	}
+	if o.goalOnly || o.noToolReview {
+		o.localControls = false
 	}
 	if err = transportConflict(); err != nil {
 		return err
@@ -245,9 +255,26 @@ func launch(args []string) error {
 	if err != nil {
 		return err
 	}
+	o.args, err = customizedArgs(o.name, o.args)
+	if err != nil {
+		return err
+	}
 	p, err := inspect(c)
 	if err != nil {
 		return err
+	}
+	for _, role := range []struct {
+		enabled, goal bool
+		label         string
+	}{{o.goalFile != "", true, "Client goal evaluator"}, {o.localControls, false, "Extra tool reviewer"}} {
+		if !role.enabled {
+			continue
+		}
+		target, e := selectedControlTarget(o.name, p, role.goal)
+		if e != nil {
+			return e
+		}
+		fmt.Fprintf(os.Stderr, "[ggrun-client] %s: %s, %d tokens; server may fall back to main: %t\n", role.label, target.alias, target.context, target.fallback)
 	}
 	if err = settingsConflict(c, p, o.args); err != nil {
 		return err
@@ -256,8 +283,8 @@ func launch(args []string) error {
 	if err != nil {
 		return err
 	}
-	if o.localControls && !claudeAtLeast(v, controlsClaudeVersion) && !o.allowUntested {
-		return fmt.Errorf("main-model review and /ggoal need Claude Code %s or newer; update with claude install %s", controlsClaudeVersion, controlsClaudeVersion)
+	if (o.localControls || o.goalFile != "") && !claudeAtLeast(v, controlsClaudeVersion) && !o.allowUntested {
+		return fmt.Errorf("main-model review need Claude Code %s or newer; update with claude install %s", controlsClaudeVersion, controlsClaudeVersion)
 	}
 	if !qualifiedClaude(v) {
 		fmt.Fprintf(os.Stderr, "[ggrun-client] Claude Code %s is newer than the tested %s; it should work, and the status line marks it untested.\n", v, controlsClaudeVersion)
@@ -266,6 +293,11 @@ func launch(args []string) error {
 	if err != nil {
 		return err
 	}
+	lease, err := acquireSessionLease(sessionFile)
+	if err != nil {
+		return err
+	}
+	defer lease.Close()
 	var s session
 	if o.resuming {
 		s, err = resumedSession(sessionFile, o.resume, p)
@@ -275,6 +307,11 @@ func launch(args []string) error {
 	if err != nil {
 		return err
 	}
+	run, err := newSession(p)
+	if err != nil {
+		return err
+	}
+	s.RunID = run.ID
 	// Prevent CLI overrides from invalidating model/context/session assumptions.
 	for _, a := range o.args {
 		k, _, _ := strings.Cut(a, "=")
@@ -301,7 +338,14 @@ func launch(args []string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Fprintln(os.Stderr, "[ggrun-client] Main-model control review enabled. Use ggrun-client goal set --file GOAL.md for persistent goals; native /goal retains its short deadline.")
+		fmt.Fprintln(os.Stderr, "[ggrun-client] Optional extra ggrun tool review enabled.")
+	}
+	if o.goalFile != "" {
+		childArgs, err = configuredControlArgs(childArgs, o.name, o.controlTimeout, []string{"Stop", "StopFailure"}, s.RunID)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(os.Stderr, "[ggrun-client] Client goal controller enabled; do not also activate native /goal. Extra ggrun tool review:", o.localControls)
 	}
 	if o.resuming {
 		childArgs = append([]string{"--resume", s.ID}, childArgs...)
@@ -310,16 +354,12 @@ func launch(args []string) error {
 		childArgs = append([]string{"--session-id", s.ID}, childArgs...)
 	}
 	s.Controls = o.localControls
+	s.Goals = o.goalFile != ""
 	if cwd, err := os.Getwd(); err == nil {
 		if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
 			cwd = resolved
 		}
 		s.Dir = cwd
-	}
-	if o.goalFile != "" {
-		if err = setGoalForSession(o.name, s, o.goalFile); err != nil {
-			return err
-		}
 	}
 	fmt.Fprintf(os.Stderr, "[ggrun-client] %s · %d tokens/slot · Claude %s · tools/files in current directory\n", p.ModelName, p.ContextPerSlot, v)
 	resolved, _ := filepath.EvalSymlinks(path)
@@ -329,10 +369,27 @@ func launch(args []string) error {
 	}
 	defer rl.Close()
 	cmd := exec.Command(path, childArgs...)
+	if s.Goals {
+		// Bind the condition to the actual selected new/resumed session before
+		// Claude can emit its first Stop event. Never reuse a stale goal binding.
+		if err = setGoalForSession(o.name, s, o.goalFile); err != nil {
+			return err
+		}
+		defer func() {
+			if e := pauseGoal(sessionFile+".goal", s.ID, s.RunID, "Client session ended; relaunch with the goal file to continue."); e != nil {
+				fmt.Fprintln(os.Stderr, "[ggrun-client] could not persist goal pause:", e)
+			}
+		}()
+	}
 	// Claude talks to the loopback relay, which detects a dead server path in
 	// about a minute and fails the request so Claude retries on a new
-	// connection. The model itself may stay silent for as long as it needs.
+	// connection. Unknown queue/prefill silence stays unbounded by default;
+	// identified generation has a separate semantic-progress idle budget.
 	cmd.Env = withLoopbackNoProxy(p.Environment(rl.URL(), c.Token, os.Environ()))
+	cmd.Env, err = applyWorkflowSettingsCapacity(cmd.Env, p, o.args)
+	if err != nil {
+		return err
+	}
 	// Versions are qualified per release; an in-session auto-update would run
 	// an untested Claude on the next launch.
 	cmd.Env = append(cmd.Env, "DISABLE_AUTOUPDATER=1")
@@ -341,11 +398,11 @@ func launch(args []string) error {
 	cmd.Stderr = os.Stderr
 	release := holdInterrupt()
 	defer release()
+	if err = saveSession(sessionFile, s); err != nil {
+		return fmt.Errorf("save verified session before launch: %w", err)
+	}
 	if err = cmd.Start(); err != nil {
 		return fmt.Errorf("start Claude Code: %w", err)
-	}
-	if err = saveSession(sessionFile, s); err != nil {
-		fmt.Fprintln(os.Stderr, "[ggrun-client] session metadata could not be saved; verified resume will be unavailable:", err)
 	}
 	err = cmd.Wait()
 	if err != nil {

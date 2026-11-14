@@ -137,7 +137,11 @@ func guidedStart(in *bufio.Reader, out io.Writer) error {
 		}
 	}
 
-	args := []string{"--connection", name, "--local-controls", "--control-timeout", "30m"}
+	args := []string{"--connection", name}
+	answer := strings.ToLower(ask("Enable extra ggrun tool review? Native permissions remain active (y/N)", "N"))
+	if answer == "y" || answer == "yes" {
+		args = append(args, "--tool-review", "--control-timeout", "30m")
+	}
 	if path, perr := sessionPath(name); perr == nil {
 		if _, rerr := resumedSession(path, "", p); rerr == nil {
 			if yes("Resume your last session in this folder") {
@@ -145,7 +149,7 @@ func guidedStart(in *bufio.Reader, out io.Writer) error {
 			}
 		}
 	}
-	fmt.Fprintln(out, "Starting Claude Code. Main-model review is on; for a long-running goal type /ggoal <condition> (not native /goal).")
+	fmt.Fprintln(out, "Starting Claude Code. For native goals type /goal <condition>; extra ggrun tool review is independent.")
 	return startClaude(args)
 }
 
