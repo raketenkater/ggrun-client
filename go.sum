@@ -38,8 +38,6 @@ github.com/muesli/cancelreader v0.2.2 h1:3I4Kt4BQjOR54NavqnDogx/MIoWBFa0StPA8ELU
 github.com/muesli/cancelreader v0.2.2/go.mod h1:3XuTXfFS2VjM+HTLZY9Ak0l6eUKfijIfMUZ4EgX0QYo=
 github.com/muesli/termenv v0.16.0 h1:S5AlUN9dENB57rsbnkPyfdGuWIlkmzJjbFf0Tf5FWUc=
 github.com/muesli/termenv v0.16.0/go.mod h1:ZRfOIKPFDYQoDFF4Olj7/QJbW60Ol/kL1pU3VfY/Cnk=
-github.com/raketenkater/ggrun/clientkit v0.0.0-20261027120216-e3b47b991081 h1:GvWainXPzDdbyxOBtkv56cAzUYfSAygeQyIlqBmtmiA=
-github.com/raketenkater/ggrun/clientkit v0.0.0-20261027120216-e3b47b991081/go.mod h1:dsZ3BHx4EZ37+GEgfCUHwVUm9NdHW/zimdY916yCT2U=
 github.com/raketenkater/ggrun/clientkit v0.0.0-20261113154638-b6cdd22114d8 h1:IseRVYMIkQqBA0BxgtuvBgZF5KB2YR+ds5Tp3OwsWek=
 github.com/raketenkater/ggrun/clientkit v0.0.0-20261113154638-b6cdd22114d8/go.mod h1:dsZ3BHx4EZ37+GEgfCUHwVUm9NdHW/zimdY916yCT2U=
 github.com/rivo/uniseg v0.4.7 h1:WUdvkW8uEhrYfLC4ZzdpI2ztxP1I582+49Oc5Mq64VQ=
