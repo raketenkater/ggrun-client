@@ -307,7 +307,7 @@ func localControlHook(name string, timeout time.Duration, statePath string, in i
 		return e
 	}
 	var result bytes.Buffer
-	if e = mainReviewHook(name, timeout, bytes.NewReader(b), &result); e != nil {
+	if e = reviewHook(name, timeout, launchedSession(statePath), bytes.NewReader(b), &result); e != nil {
 		return e
 	}
 	var reply map[string]map[string]any
@@ -318,6 +318,20 @@ func localControlHook(name string, timeout time.Duration, statePath string, in i
 		h["updatedInput"] = json.RawMessage(input.Input)
 	}
 	return json.NewEncoder(out).Encode(reply)
+}
+
+// launchedSession is the session record this hook's launch wrote beside its
+// goal state, or nil when there is none.
+func launchedSession(statePath string) *session {
+	if statePath == "" {
+		return nil
+	}
+	raw, e := clientkit.ReadPrivate(strings.TrimSuffix(statePath, ".goal"))
+	var s session
+	if e != nil || json.Unmarshal(raw, &s) != nil || s.ModelID == "" {
+		return nil
+	}
+	return &s
 }
 
 func localGoalHook(name string, timeout time.Duration, path string, input reviewInput, out io.Writer, runIDs ...string) error {

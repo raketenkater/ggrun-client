@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/raketenkater/ggrun/clientkit"
 )
 
 func TestReviewRejectsIncompleteOrAmbiguousVerdicts(t *testing.T) {
@@ -238,5 +240,42 @@ func TestReviewEvidenceKeepsAttachmentsAndToleratesOldCorruption(t *testing.T) {
 	}
 	if !strings.Contains(string(b), "STOP_DO_NOT_PUSH") || !strings.Contains(string(b), "human") {
 		t.Fatal("queued human prompt dropped from evidence")
+	}
+}
+
+// W0 (2026-11-16): the server changed model after connect. Launch accepted the
+// new model and recorded it in the session, but the review hook compared the
+// connect-time profile and blocked every non-read tool call.
+func TestReviewBindsToTheLaunchedSessionModel(t *testing.T) {
+	saved := profile()
+	live := profile()
+	live.ModelID, live.ContextPerSlot = "model-b", 32768
+	launched := &session{ModelID: "model-b", Context: 32768}
+	if err := reviewServedModel(live, saved, launched); err != nil {
+		t.Fatalf("review refused the model its session was launched with: %v", err)
+	}
+	if err := reviewServedModel(live, saved, nil); err == nil {
+		t.Fatal("without a session record a changed model must still be refused")
+	}
+	if err := reviewServedModel(live, saved, &session{ModelID: "model-a", Context: 65536}); err == nil || !strings.Contains(err.Error(), "since this session started") {
+		t.Fatalf("a model change after launch must be refused: %v", err)
+	}
+	if err := reviewServedModel(live, saved, &session{ModelID: "model-b", Context: 65536}); err == nil {
+		t.Fatal("a context smaller than at launch must be refused")
+	}
+}
+
+func TestLaunchedSessionReadsTheRecordBesideGoalState(t *testing.T) {
+	dir := t.TempDir()
+	sp := filepath.Join(dir, "default-x.json")
+	b, _ := json.Marshal(session{ID: "s", ModelID: "model-b", Context: 4096, Version: 1})
+	if err := clientkit.WritePrivate(sp, b); err != nil {
+		t.Fatal(err)
+	}
+	if s := launchedSession(sp + ".goal"); s == nil || s.ModelID != "model-b" || s.Context != 4096 {
+		t.Fatalf("session not read: %#v", s)
+	}
+	if launchedSession(filepath.Join(dir, "missing.json.goal")) != nil || launchedSession("") != nil {
+		t.Fatal("missing record must yield nil")
 	}
 }

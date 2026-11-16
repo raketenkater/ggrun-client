@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/raketenkater/ggrun/clientkit"
 )
 
 const reviewPolicy = `You independently review one proposed coding-agent tool action before execution.
@@ -279,6 +281,29 @@ func parseControlVerdict(b []byte) (reviewVerdict, error) {
 }
 
 func mainReviewHook(name string, timeout time.Duration, in io.Reader, out io.Writer) error {
+	return reviewHook(name, timeout, nil, in, out)
+}
+
+// reviewServedModel decides whether a review may run against the live profile.
+// A review is bound to the model its session was launched with; without a
+// session record it falls back to the profile saved at connect time. Comparing
+// a new session with the connect-time profile blocked every tool call once the
+// server changed model after connect, although launch had accepted the change.
+func reviewServedModel(live clientkit.Profile, saved clientkit.Profile, bound *session) error {
+	wantModel, wantContext := saved.ModelID, saved.ContextPerSlot
+	if bound != nil && bound.ModelID != "" {
+		wantModel, wantContext = bound.ModelID, bound.Context
+	}
+	if live.ModelID != wantModel || live.ContextPerSlot < wantContext {
+		if bound != nil && bound.ModelID != "" {
+			return fmt.Errorf("server model or context changed since this session started; start a new session before review")
+		}
+		return fmt.Errorf("connection model or context changed; reconnect before review")
+	}
+	return nil
+}
+
+func reviewHook(name string, timeout time.Duration, bound *session, in io.Reader, out io.Writer) error {
 	if timeout < time.Second || timeout > 24*time.Hour {
 		return fmt.Errorf("review timeout must be between 1s and 24h")
 	}
@@ -311,8 +336,8 @@ func mainReviewHook(name string, timeout time.Duration, in io.Reader, out io.Wri
 	if err != nil {
 		return err
 	}
-	if p.ModelID != c.Profile.ModelID || p.ContextPerSlot < c.Profile.ContextPerSlot {
-		return fmt.Errorf("connection model or context changed; reconnect before review")
+	if err = reviewServedModel(p, c.Profile, bound); err != nil {
+		return err
 	}
 	c.Profile = p
 	if c.Profile.MainAlias == "" {
