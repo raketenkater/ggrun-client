@@ -1,5 +1,18 @@
 # ggrun-client
 
+### Tool-review session repair (alpha.9)
+
+Tool reviews now validate the live server against the model and context verified
+for the current project session. An older connection snapshot from initial
+pairing no longer blocks every Bash or Workflow call after a valid new launch.
+Actual model changes, reduced context, and mismatched sessions still stop review;
+valid allow, deny, and ask verdicts remain authoritative.
+
+Update with the installer below, then exit and resume the client to load all
+launcher changes. Your Claude transcript is preserved. Extra ggrun tool review
+is optional; native Auto permissions remain enabled by default. This repair does
+not remove Claude Code’s separate native goal-evaluator deadline.
+
 ### Request progress and saved customizations
 
 The relay distinguishes received bytes from model output. Once an Anthropic
@@ -43,7 +56,7 @@ computer. The server owns inference and scheduling. Your laptop owns files,
 tools, MCPs, memories and sessions. The connector launches your installed Claude
 CLI; it does not replace the coding harness or include Claude binaries.
 
-**Development status:** protocol v1 alpha, [v0.1.0-alpha.2](https://github.com/raketenkater/ggrun-client/releases/tag/v0.1.0-alpha.2). Not yet qualified on a real laptop. The initial Claude CLI target is **2.1.307**. Linux and Windows
+**Development status:** protocol v1 alpha, [v0.1.0-alpha.9](https://github.com/raketenkater/ggrun-client/releases/tag/v0.1.0-alpha.9). Not yet qualified on a real laptop. The initial Claude CLI target is **2.1.307**. Linux and Windows
 contract tests and portable builds are separate from real GPU/laptop acceptance.
 Clients target macOS, Linux and Windows; headless servers target Linux and
 macOS. Native macOS ARM64 tests and published-alpha installation passed; real-device
@@ -54,14 +67,14 @@ Claude terminal acceptance remains separate on every client OS.
 Install the checksum-verified alpha binary without Go:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/raketenkater/ggrun-client/v0.1.0-alpha.2/install.sh | GGRUN_CLIENT_VERSION=v0.1.0-alpha.2 sh
+curl -fsSL https://raw.githubusercontent.com/raketenkater/ggrun-client/v0.1.0-alpha.9/install.sh | GGRUN_CLIENT_VERSION=v0.1.0-alpha.9 sh
 ```
 
 On Windows PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/raketenkater/ggrun-client/v0.1.0-alpha.2/install.ps1 -OutFile install-ggrun-client.ps1
-./install-ggrun-client.ps1 -Version v0.1.0-alpha.2
+irm https://raw.githubusercontent.com/raketenkater/ggrun-client/v0.1.0-alpha.9/install.ps1 -OutFile install-ggrun-client.ps1
+./install-ggrun-client.ps1 -Version v0.1.0-alpha.9
 ```
 
 Install [Claude Code](https://code.claude.com/docs/en/setup) separately. The

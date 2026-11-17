@@ -179,13 +179,21 @@ type session struct {
 }
 
 func sessionPath(name string) (string, error) {
-	if !namePattern.MatchString(name) {
-		return "", fmt.Errorf("invalid connection name")
-	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return "", err
 	}
+	return sessionPathForDir(name, cwd)
+}
+
+func sessionPathForDir(name, cwd string) (string, error) {
+	if !namePattern.MatchString(name) {
+		return "", fmt.Errorf("invalid connection name")
+	}
+	if !filepath.IsAbs(cwd) {
+		return "", fmt.Errorf("session project directory must be absolute")
+	}
+	cwd = filepath.Clean(cwd)
 	if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
 		cwd = resolved
 	}
