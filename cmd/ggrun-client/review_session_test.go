@@ -17,12 +17,13 @@ import (
 
 func TestReviewUsesVerifiedSessionInsteadOfPairingSnapshot(t *testing.T) {
 	for _, tc := range []struct {
-		name, decision                             string
-		changeModel, shrink, wrongSession, missing bool
+		name, decision                                    string
+		changeModel, shrink, wrongSession, missing, moved bool
 	}{
 		{name: "stale pairing snapshot", decision: "allow"},
 		{name: "preserve deny", decision: "deny"},
 		{name: "preserve ask", decision: "ask"},
+		{name: "directory changed within session", decision: "allow", moved: true},
 		{name: "actual model changed", changeModel: true},
 		{name: "actual context reduced", shrink: true},
 		{name: "wrong native session", wrongSession: true},
@@ -85,9 +86,16 @@ func TestReviewUsesVerifiedSessionInsteadOfPairingSnapshot(t *testing.T) {
 			if tc.wrongSession {
 				input.Session = "different-session"
 			}
+			if tc.moved {
+				input.CWD = t.TempDir()
+			}
 			b, _ := json.Marshal(input)
 			var out bytes.Buffer
-			err = mainReviewHook("fixture", 5*time.Second, bytes.NewReader(b), &out)
+			if tc.moved {
+				err = localControlHook("fixture", 5*time.Second, sp+".goal", bytes.NewReader(b), &out)
+			} else {
+				err = mainReviewHook("fixture", 5*time.Second, bytes.NewReader(b), &out)
+			}
 			if tc.decision == "" {
 				if err == nil || reviews.Load() != 0 || strings.Contains(out.String(), "allow") {
 					t.Fatalf("invalid session reached review: err=%v calls=%d out=%s", err, reviews.Load(), out.String())
