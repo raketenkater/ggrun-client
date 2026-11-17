@@ -311,8 +311,17 @@ func mainReviewHook(name string, timeout time.Duration, in io.Reader, out io.Wri
 	if err != nil {
 		return err
 	}
-	if p.ModelID != c.Profile.ModelID || p.ContextPerSlot < c.Profile.ContextPerSlot {
-		return fmt.Errorf("connection model or context changed; reconnect before review")
+	// A connection's profile is the discovery snapshot saved at pairing time.
+	// A later launch verifies the live profile and binds it to its own session;
+	// comparing against the pairing snapshot rejects legitimate new sessions.
+	// Use that exact native session instead, retaining real identity/capacity
+	// drift checks even if another project refreshes the shared connection.
+	sessionFile, err := sessionPathForDir(name, input.CWD)
+	if err != nil {
+		return err
+	}
+	if _, err := resumedSession(sessionFile, input.Session, p); err != nil {
+		return fmt.Errorf("review session validation: %w", err)
 	}
 	c.Profile = p
 	if c.Profile.MainAlias == "" {
