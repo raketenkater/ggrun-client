@@ -76,16 +76,17 @@ type relayState struct {
 }
 
 type relay struct {
-	mu       sync.Mutex
-	state    relayState
-	next     int
-	active   map[int]*relayRequest
-	path     string
-	dirty    chan struct{}
-	server   *http.Server
-	listener net.Listener
-	done     chan struct{}
-	policy   relayPolicy
+	mu        sync.Mutex
+	persistMu sync.Mutex
+	state     relayState
+	next      int
+	active    map[int]*relayRequest
+	path      string
+	dirty     chan struct{}
+	server    *http.Server
+	listener  net.Listener
+	done      chan struct{}
+	policy    relayPolicy
 }
 
 func relayStatePath(name string) (string, error) {
@@ -201,6 +202,11 @@ func (r *relay) snapshot() relayState {
 }
 
 func (r *relay) persist() {
+	// Serialize the snapshot and replacement together. Two writers sharing
+	// the temporary pathname could otherwise truncate each other's snapshot or
+	// publish older in-flight state after a completed/failed request.
+	r.persistMu.Lock()
+	defer r.persistMu.Unlock()
 	if r.path == "" {
 		return
 	}
