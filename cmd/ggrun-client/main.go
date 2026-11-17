@@ -74,6 +74,8 @@ func run(args []string) error {
 		return importCustomization(*name, *file)
 	case "claude":
 		return launch(args[1:])
+	case "review-eval":
+		return reviewEval(args[1:], os.Stdout)
 	case "workflow-hook":
 		return workflowHook(os.Stdin, os.Stdout)
 	case "goal":
