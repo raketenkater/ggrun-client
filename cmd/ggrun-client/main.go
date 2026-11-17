@@ -61,6 +61,17 @@ func run(args []string) error {
 		return connect(args[1:])
 	case "doctor":
 		return doctor(args[1:])
+	case "customize":
+		fs := flag.NewFlagSet("customize", flag.ContinueOnError)
+		name := fs.String("name", "default", "saved connection")
+		file := fs.String("file", "", "customization JSON file")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *file == "" || fs.NArg() != 0 {
+			return fmt.Errorf("use customize --name CONNECTION --file FILE.json")
+		}
+		return importCustomization(*name, *file)
 	case "claude":
 		return launch(args[1:])
 	case "workflow-hook":
@@ -72,13 +83,14 @@ func run(args []string) error {
 		name := fs.String("connection", "default", "saved connection")
 		timeout := fs.Duration("timeout", 10*time.Minute, "control budget")
 		state := fs.String("goal-state", "", "private goal state path")
+		runID := fs.String("run-id", "", "verified launch identity")
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
 		if fs.NArg() != 0 {
 			return fmt.Errorf("unexpected control-hook arguments")
 		}
-		return localControlHook(*name, *timeout, *state, os.Stdin, os.Stdout)
+		return localControlHook(*name, *timeout, *state, os.Stdin, os.Stdout, *runID)
 	case "experimental-review-hook":
 		fs := flag.NewFlagSet("experimental-review-hook", flag.ContinueOnError)
 		name := fs.String("name", "default", "saved connection")
@@ -105,9 +117,13 @@ func usage() {
   ggrun-client start           the same as plain prompts (no full-screen UI)
   ggrun-client connect URL [--name default] [--allow-http] [--token-stdin]
   ggrun-client doctor [--name default]
+  ggrun-client customize --name default --file FILE.json
   ggrun-client claude [--connection default] [--resume [SESSION_ID]] [--local-controls] [-- CLAUDE_ARGS...]
-  ggrun-client goal set --connection default --file GOAL.md
-  ggrun-client goal status|resume|clear --connection default
+  In Claude: /goal CONDITION, /goal, /goal clear
+  Optional client controller: claude --goal-only --goal-file GOAL.md
+  Optional extra ggrun tool reviewer: --tool-review (--local-controls alias)
+  Disable extra ggrun tool reviewer: --no-tool-review
+  Client goal lifecycle: goal status|clear|resume [--connection default]
   ggrun-client forget [--name default]
 
 Run claude from your laptop project directory. Files, tools and sessions stay
@@ -171,6 +187,9 @@ func request(ctx context.Context, c connection, path string, out any) error {
 	cl := http.Client{Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, err := cl.Do(req)
 	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return errUnreachable
 	}
 	defer resp.Body.Close()
@@ -198,14 +217,18 @@ func request(ctx context.Context, c connection, path string, out any) error {
 	return nil
 }
 func inspect(c connection) (clientkit.Profile, error) {
+	return inspectContext(context.Background(), c)
+}
+
+func inspectContext(ctx context.Context, c connection) (clientkit.Profile, error) {
 	var p clientkit.Profile
-	if err := request(context.Background(), c, "/ggrun/client", &p); err != nil {
+	if err := request(ctx, c, "/ggrun/client", &p); err != nil {
 		return p, err
 	}
 	if err := p.Validate(); err != nil {
 		return p, err
 	}
-	return p, request(context.Background(), c, "/health", nil)
+	return p, request(ctx, c, "/health", nil)
 }
 func connect(args []string) error {
 	fs := flag.NewFlagSet("connect", flag.ContinueOnError)

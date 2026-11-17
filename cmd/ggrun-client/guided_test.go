@@ -112,10 +112,10 @@ func TestGuidedFirstRunConnectsWaitsInstallsAndLaunches(t *testing.T) {
 	if len(g.installed) != 1 || g.installed[0] != controlsClaudeVersion {
 		t.Fatalf("qualified Claude not offered: %v", g.installed)
 	}
-	if len(g.launched) != 1 || strings.Join(g.launched[0], " ") != "--connection default --local-controls --control-timeout 30m" {
+	if len(g.launched) != 1 || strings.Join(g.launched[0], " ") != "--connection default" {
 		t.Fatalf("launch args: %v", g.launched)
 	}
-	if !strings.Contains(out.String(), "/ggoal") {
+	if !strings.Contains(out.String(), "/goal") {
 		t.Fatal("goal command not explained")
 	}
 }
@@ -138,7 +138,7 @@ func TestGuidedRepairsChangedTokenAndOffersResume(t *testing.T) {
 	g := stubGuided(t, newToken)
 	var out bytes.Buffer
 	// Answers: install the qualified Claude, then resume.
-	in := bufio.NewReader(strings.NewReader("y\ny\n"))
+	in := bufio.NewReader(strings.NewReader("y\nn\ny\n"))
 	if err := guidedStart(in, &out); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}

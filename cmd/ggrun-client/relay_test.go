@@ -166,6 +166,7 @@ func TestRelayStreamsAndTracksBytes(t *testing.T) {
 			w.(http.Flusher).Flush()
 			time.Sleep(50 * time.Millisecond)
 		}
+		io.WriteString(w, messageStop)
 	}))
 	state := filepath.Join(t.TempDir(), "relay.json")
 	rl, err := startRelay(gw.URL, state, relayState{})
@@ -218,7 +219,7 @@ func TestReviewFailsFastOnDeadPath(t *testing.T) {
 	defer cancel()
 	start := time.Now()
 	_, err := evaluateReview(ctx, c, []byte(`{}`))
-	if err == nil || !strings.Contains(err.Error(), "lost the server connection twice") {
+	if err == nil || !strings.Contains(err.Error(), "after 2 attempts") {
 		t.Fatalf("review on a dead path: %v", err)
 	}
 	// Two attempts: PING detection, then a retry whose TLS handshake meets the

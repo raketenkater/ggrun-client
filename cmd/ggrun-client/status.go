@@ -131,18 +131,24 @@ func statusLine(sp *serverProgress, rt *routerStatus, reqErr error, rs *relaySta
 		q := rs.InFlight[0]
 		age := now.Sub(q.Started)
 		switch {
+		case q.Phase == "generation" && !q.LastProgress.IsZero() && now.Sub(q.LastProgress) > time.Minute:
+			parts = append(parts, "⚠ no model progress for "+short(now.Sub(q.LastProgress)))
 		case !q.Headers.IsZero() && !q.LastByte.IsZero() && now.Sub(q.LastByte) > time.Minute:
 			parts = append(parts, "⚠ no data for "+short(now.Sub(q.LastByte)))
 		case !q.Headers.IsZero():
-			// Streaming normally; the server line carries the speeds.
+			if q.Phase == "unknown" {
+				parts = append(parts, "model progress unknown · "+short(age))
+			}
 		case reqErr == nil && sp != nil && sp.InFlight != nil && *sp.InFlight == 0 && age > lostAfter:
 			parts = append(parts, "⚠ request not reaching server · "+short(age))
 		case reqErr != nil:
 			parts = append(parts, "waiting "+short(age))
+		case q.Phase == "unknown":
+			parts = append(parts, "model progress unknown · "+short(age))
 		}
 	}
 	if rs.ConsecutiveErr > 0 && now.Sub(rs.LastErrorAt) < 2*time.Minute {
-		parts = append(parts, fmt.Sprintf("⚠ connection lost · Claude retries (%d)", rs.ConsecutiveErr))
+		parts = append(parts, fmt.Sprintf("⚠ request failed · check Claude retry/pause state (%d)", rs.ConsecutiveErr))
 	}
 	if !rs.Qualified && rs.ClaudeVersion != "" {
 		parts = append(parts, "untested Claude "+rs.ClaudeVersion)

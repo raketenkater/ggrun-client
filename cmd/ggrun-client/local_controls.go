@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -28,6 +29,7 @@ If background work or a required check is unfinished, return deny, not allow.`
 type goalRecord struct {
 	Version   int    `json:"version"`
 	Session   string `json:"session"`
+	RunID     string `json:"run_id,omitempty"`
 	Model     string `json:"model"`
 	Condition string `json:"condition"`
 	State     string `json:"state"`
@@ -94,7 +96,7 @@ func writeGoal(path string, g goalRecord) error {
 }
 
 func setGoalForSession(name string, s session, file string) error {
-	if s.ID == "" || s.ModelID == "" || !s.Controls {
+	if s.ID == "" || s.ModelID == "" || (!s.Controls && !s.Goals) {
 		return fmt.Errorf("goal requires a verified session")
 	}
 	f, e := os.Open(file)
@@ -115,7 +117,7 @@ func setGoalForSession(name string, s session, file string) error {
 		return e
 	}
 	return withGoalLock(path, func() error {
-		return writeGoal(path, goalRecord{Version: 1, Session: s.ID, Model: s.ModelID, Condition: condition, State: "active", Revision: fmt.Sprint(time.Now().UnixNano())})
+		return writeGoal(path, goalRecord{Version: 1, Session: s.ID, RunID: s.RunID, Model: s.ModelID, Condition: condition, State: "active", Revision: fmt.Sprint(time.Now().UnixNano())})
 	})
 }
 
@@ -167,14 +169,17 @@ func goalCommand(args []string) error {
 			if json.Unmarshal(raw, &s) != nil || s.ID == "" {
 				return fmt.Errorf("invalid verified session")
 			}
-			if !s.Controls {
-				return fmt.Errorf("this verified session was not launched with --local-controls")
+			if !s.Goals {
+				return fmt.Errorf("this session has no client goal hook; launch with --goal-only --goal-file FILE or use native /goal")
 			}
-			g := goalRecord{Version: 1, Session: s.ID, Model: s.ModelID, Condition: condition, State: "active", Revision: fmt.Sprint(time.Now().UnixNano())}
+			if e = requireLiveSession(sp); e != nil {
+				return e
+			}
+			g := goalRecord{Version: 1, Session: s.ID, RunID: s.RunID, Model: s.ModelID, Condition: condition, State: "active", Revision: fmt.Sprint(time.Now().UnixNano())}
 			if e = writeGoal(path, g); e != nil {
 				return e
 			}
-			fmt.Println("Goal active; it will be evaluated when the current turn finishes. Use --local-controls on this client session.")
+			fmt.Println("Client goal active; it will be evaluated when the current turn finishes.")
 			return nil
 		}
 		g, e := readGoal(path)
@@ -183,6 +188,15 @@ func goalCommand(args []string) error {
 		}
 		switch action {
 		case "status":
+			if g.State == "active" {
+				if err := verifyGoalOwner(strings.TrimSuffix(path, ".goal"), g); err != nil {
+					g.State, g.Reason = "paused", err.Error()
+					g.Revision = fmt.Sprint(time.Now().UnixNano())
+					if err = writeGoal(path, g); err != nil {
+						return err
+					}
+				}
+			}
 			fmt.Printf("Goal %s", g.State)
 			if g.Reason != "" {
 				fmt.Printf(": %s", g.Reason)
@@ -192,7 +206,11 @@ func goalCommand(args []string) error {
 		case "clear":
 			g.State = "cleared"
 		case "resume":
+			if err := verifyGoalOwner(strings.TrimSuffix(path, ".goal"), g); err != nil {
+				return err
+			}
 			g.State = "active"
+			g.Failures = 0
 		default:
 			return fmt.Errorf("unknown goal command %q", action)
 		}
@@ -202,11 +220,14 @@ func goalCommand(args []string) error {
 			return e
 		}
 		fmt.Println("Goal", g.State)
+		if action == "resume" {
+			fmt.Println("If Claude is idle, send it a message to start the next turn; this command does not start one.")
+		}
 		return nil
 	})
 }
 
-func localControlHook(name string, timeout time.Duration, statePath string, in io.Reader, out io.Writer) error {
+func localControlHook(name string, timeout time.Duration, statePath string, in io.Reader, out io.Writer, runIDs ...string) error {
 	if timeout < time.Second || timeout > 24*time.Hour {
 		return fmt.Errorf("control timeout must be between 1s and 24h")
 	}
@@ -218,6 +239,27 @@ func localControlHook(name string, timeout time.Duration, statePath string, in i
 	if json.Unmarshal(b, &input) != nil {
 		return fmt.Errorf("invalid control event")
 	}
+	if input.Event == "Stop" || input.Event == "StopFailure" {
+		if len(runIDs) > 0 && runIDs[0] != "" {
+			g, err := readGoal(statePath)
+			if err != nil {
+				return err
+			}
+			if g.RunID != runIDs[0] || g.Session != input.Session {
+				_, err = io.WriteString(out, "{}\n")
+				return err
+			}
+		}
+		if input.Event == "StopFailure" {
+			// Native Claude ignores StopFailure decisions. Record an accurate
+			// pause, without pretending this hook can start another turn.
+			if err := pauseGoal(statePath, input.Session, firstRunID(runIDs), "Native turn failed; inspect the error in Claude, then resume the goal and send a message to continue."); err != nil {
+				return err
+			}
+			_, err := io.WriteString(out, "{}\n")
+			return err
+		}
+	}
 	if input.Event == "UserPromptSubmit" {
 		return goalPromptHook(name, statePath, input, out)
 	}
@@ -225,11 +267,16 @@ func localControlHook(name string, timeout time.Duration, statePath string, in i
 		return fmt.Errorf("native control event omitted its permission mode")
 	}
 	if input.Mode != "auto" {
+		if input.Event == "Stop" {
+			if err := pauseGoal(statePath, input.Session, firstRunID(runIDs), "Client goal paused because the session left Auto mode."); err != nil {
+				return err
+			}
+		}
 		_, e = io.WriteString(out, "{}\n")
 		return e
 	}
 	if input.Event == "Stop" {
-		return localGoalHook(name, timeout, statePath, input, out)
+		return localGoalHook(name, timeout, statePath, input, out, runIDs...)
 	}
 	if input.Event != "PreToolUse" {
 		return fmt.Errorf("unsupported control event")
@@ -273,7 +320,7 @@ func localControlHook(name string, timeout time.Duration, statePath string, in i
 	return json.NewEncoder(out).Encode(reply)
 }
 
-func localGoalHook(name string, timeout time.Duration, path string, input reviewInput, out io.Writer) error {
+func localGoalHook(name string, timeout time.Duration, path string, input reviewInput, out io.Writer, runIDs ...string) error {
 	if path == "" {
 		return fmt.Errorf("goal hook has no verified state path")
 	}
@@ -285,9 +332,17 @@ func localGoalHook(name string, timeout time.Duration, path string, input review
 	if e != nil {
 		return e
 	}
-	if g.Session != input.Session || g.State != "active" {
+	if g.Session != input.Session || g.State != "active" || (firstRunID(runIDs) != "" && g.RunID != firstRunID(runIDs)) {
 		_, e = io.WriteString(out, "{}\n")
 		return e
+	}
+	if firstRunID(runIDs) != "" {
+		if err := verifyGoalOwner(strings.TrimSuffix(path, ".goal"), g); err != nil {
+			if e := pauseGoal(path, g.Session, g.RunID, err.Error()); e != nil {
+				return e
+			}
+			return err
+		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -327,13 +382,19 @@ func localGoalHook(name string, timeout time.Duration, path string, input review
 		c, e = load(name)
 		if e == nil {
 			var p clientkit.Profile
-			p, e = inspect(c)
+			p, e = inspectContext(ctx, c)
 			if e == nil {
 				if p.ModelID != g.Model {
 					e = fmt.Errorf("goal model identity changed; start a new verified goal")
 				} else {
 					c.Profile = p
-					verdict, e = evaluateControl(ctx, c, evidence, goalPolicy)
+					var target controlTarget
+					target, e = selectedControlTarget(name, p, true)
+					if e == nil {
+						verdict, e = evaluateControlTarget(ctx, c, evidence, goalPolicy, target)
+					} else {
+						e = &controlFailure{kind: "configuration", cause: e}
+					}
 				}
 			}
 		}
@@ -396,7 +457,7 @@ func localGoalHook(name string, timeout time.Duration, path string, input review
 		return json.NewEncoder(out).Encode(map[string]string{"decision": "block", "reason": "User-configured goal: " + g.Condition + "\nGoal is not complete: " + verdict.Reason})
 	}
 	if verdict.Decision == "ask" {
-		return json.NewEncoder(out).Encode(map[string]any{"systemMessage": "[ggrun-client] Goal paused: " + verdict.Reason + " (/ggoal resume to continue)"})
+		return json.NewEncoder(out).Encode(map[string]any{"systemMessage": "[ggrun-client] Goal paused: " + verdict.Reason + " (use ggrun-client goal resume from this project to continue)"})
 	}
 	if verdict.Decision == "allow" {
 		return json.NewEncoder(out).Encode(map[string]any{"systemMessage": "[ggrun-client] Goal complete: " + verdict.Reason})
@@ -554,6 +615,12 @@ func writeControlPlugin(dir string) error {
 }
 
 func controlArgs(args []string, name string, timeout time.Duration) ([]string, error) {
+	return configuredControlArgs(args, name, timeout, []string{"PreToolUse"})
+}
+
+// Goal continuation and optional per-tool review must never implicitly enable
+// each other. Both use the same private settings merge and bounded hook policy.
+func configuredControlArgs(args []string, name string, timeout time.Duration, events []string, runIDs ...string) ([]string, error) {
 	mode := ""
 	for i, a := range args {
 		if a == "--permission-mode" && i+1 < len(args) {
@@ -619,11 +686,15 @@ func controlArgs(args []string, name string, timeout time.Duration) ([]string, e
 	if e != nil {
 		return nil, e
 	}
-	hook := map[string]any{"type": "command", "command": shellCommand(exe, "control-hook", "--connection", name, "--timeout", timeout.String(), "--goal-state", statePath), "timeout": int(timeout.Seconds()) + 30, "onFailure": "block"}
+	command := []string{exe, "control-hook", "--connection", name, "--timeout", timeout.String(), "--goal-state", statePath}
+	if id := firstRunID(runIDs); id != "" {
+		command = append(command, "--run-id", id)
+	}
+	hook := map[string]any{"type": "command", "command": shellCommand(command...), "timeout": int(timeout.Seconds()) + 30, "onFailure": "block"}
 	if runtime.GOOS == "windows" {
 		hook["shell"] = "powershell"
 	}
-	for _, event := range []string{"PreToolUse", "Stop", "UserPromptSubmit"} {
+	for _, event := range events {
 		rows := []any{}
 		if v, ok := hooks[event]; ok {
 			var valid bool
@@ -680,15 +751,18 @@ func controlArgs(args []string, name string, timeout time.Duration) ([]string, e
 	} else {
 		args = append([]string{"--settings", settingsPath}, args...)
 	}
-	pluginDir := base + ".plugin"
-	if e = writeControlPlugin(pluginDir); e != nil {
-		return nil, e
-	}
-	return append([]string{"--plugin-dir", pluginDir}, args...), nil
+	return args, nil
 }
 
 // permanentGoalError marks errors that a retry cannot fix.
 func permanentGoalError(e error) bool {
+	if errors.Is(e, errCredential) {
+		return true
+	}
+	var failure *controlFailure
+	if errors.As(e, &failure) && !failure.retry {
+		return true
+	}
 	m := e.Error()
 	return strings.Contains(m, "model identity changed") || strings.Contains(m, "run /compact")
 }
