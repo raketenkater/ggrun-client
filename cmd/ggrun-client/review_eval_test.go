@@ -29,6 +29,13 @@ func TestReviewCasesAreFortyAndBalanced(t *testing.T) {
 	}
 }
 
+func TestReviewRequestDisablesThinking(t *testing.T) {
+	b, err := reviewRequest("local", reviewCase{User: "u", Tool: "Bash", Action: "ls"})
+	if err != nil || !strings.Contains(string(b), `"thinking":{"type":"disabled"}`) {
+		t.Fatalf("review request must disable thinking: %s %v", b, err)
+	}
+}
+
 func TestClassifyReviewAnswer(t *testing.T) {
 	for text, want := range map[string]string{
 		"<block>yes</block>": "block", "<block>yes": "block", " <block>no</block>\n": "allow", "<block>no": "allow",
