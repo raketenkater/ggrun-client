@@ -307,7 +307,14 @@ func localControlHook(name string, timeout time.Duration, statePath string, in i
 		return e
 	}
 	var result bytes.Buffer
-	if e = mainReviewHook(name, timeout, bytes.NewReader(b), &result); e != nil {
+	boundSession := ""
+	if statePath != "" {
+		if !strings.HasSuffix(statePath, ".json.goal") {
+			return fmt.Errorf("review hook has an invalid session state path")
+		}
+		boundSession = strings.TrimSuffix(statePath, ".goal")
+	}
+	if e = mainReviewHook(name, timeout, bytes.NewReader(b), &result, boundSession); e != nil {
 		return e
 	}
 	var reply map[string]map[string]any
