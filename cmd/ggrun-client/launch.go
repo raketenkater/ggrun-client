@@ -349,10 +349,19 @@ func launch(args []string) error {
 		fmt.Fprintln(os.Stderr, "[ggrun-client] Optional extra ggrun tool review enabled.")
 	}
 	if o.goalFile != "" {
-		childArgs, err = configuredControlArgs(childArgs, o.name, o.controlTimeout, []string{"Stop", "StopFailure"}, s.RunID)
+		childArgs, err = configuredControlArgs(childArgs, o.name, o.controlTimeout, []string{"Stop", "StopFailure", "UserPromptSubmit"}, s.RunID)
 		if err != nil {
 			return err
 		}
+		pluginDir, err := os.MkdirTemp(filepath.Dir(sessionFile), "goal-command-")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(pluginDir)
+		if err = writeControlPlugin(pluginDir); err != nil {
+			return err
+		}
+		childArgs = append([]string{"--plugin-dir", pluginDir}, childArgs...)
 		fmt.Fprintln(os.Stderr, "[ggrun-client] Client goal controller enabled; do not also activate native /goal. Extra ggrun tool review:", o.localControls)
 	}
 	if o.resuming {

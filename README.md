@@ -230,8 +230,8 @@ extra reviewer even when the legacy `--local-controls` flag is supplied.
 Native permissions, user hooks and deny/ask rules remain effective.
 
 The client controller installs a Stop evaluator and a StopFailure notification
-hook; it does not install `/ggoal` or a
-UserPromptSubmit hook. Do not also activate native `/goal` in that session.
+hook. Use `/ggoal status` in that session to see the condition and the last
+evaluation. Do not also activate native `/goal` in that session.
 From the same project directory, `ggrun-client goal status`, `goal clear` and
 `goal resume` manage the client condition. Resume requires the same verified
 running session with the client hook; a new launch with `--goal-file` explicitly binds
