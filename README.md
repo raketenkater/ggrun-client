@@ -136,9 +136,13 @@ MCPs, permission choices and custom status lines. Conflicting saved connection
 settings are diagnosed. With explicit custom `--settings`, configure the
 `ggrun-client workflow-hook` PreToolUse hook for Workflow yourself. Web research
 can use your search MCP or the optional DuckDuckGo MCP when `uvx` is installed
-locally. Permission mode defaults to Auto. Main-model safety checks can exceed
-Claude's separate classifier deadline, even with a long API timeout; autonomous
-serving needs a reviewer that completes these checks within that deadline.
+locally. Permission mode defaults to Auto. The client defaults to separate
+Claude Code classifier requests through ggrun, since local model responses
+have no server-side safeguard verdict. An explicit
+`CLAUDE_CODE_AUTO_MODE_SERVER` setting takes precedence. Main-model safety
+checks can exceed Claude's separate classifier deadline even with a long API
+timeout, so autonomous serving needs a reviewer that completes those checks
+within that deadline.
 Use an explicit Claude `--permission-mode` or
 `GGRUN_CLAUDE_PERMISSION_MODE=inherit` to retain another
 choice.
