@@ -407,6 +407,11 @@ func launch(args []string) error {
 	if err != nil {
 		return err
 	}
+	// ggrun routes separate Claude Code classifier requests. Local model
+	// responses do not carry the Anthropic server-side safeguard verdict.
+	if _, configured := os.LookupEnv("CLAUDE_CODE_AUTO_MODE_SERVER"); !configured {
+		cmd.Env = append(cmd.Env, "CLAUDE_CODE_AUTO_MODE_SERVER=0")
+	}
 	// Versions are qualified per release; an in-session auto-update would run
 	// an untested Claude on the next launch.
 	cmd.Env = append(cmd.Env, "DISABLE_AUTOUPDATER=1")

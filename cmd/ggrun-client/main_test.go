@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -245,6 +246,10 @@ func TestLaunchRunsToolsOnClientAndScopesEnvironment(t *testing.T) {
 	t.Setenv("GGRUN_CLIENT_TEST_CHILD", "1")
 	t.Setenv("GGRUN_CLIENT_TEST_RECEIPT", receipt)
 	t.Setenv("ANTHROPIC_API_KEY", "do-not-forward")
+	t.Setenv("CLAUDE_CODE_AUTO_MODE_SERVER", "")
+	if err := os.Unsetenv("CLAUDE_CODE_AUTO_MODE_SERVER"); err != nil {
+		t.Fatal(err)
+	}
 	for _, k := range []string{"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"} {
 		t.Setenv(k, "")
 	}
@@ -296,6 +301,9 @@ func TestLaunchRunsToolsOnClientAndScopesEnvironment(t *testing.T) {
 	if got.Relayed != 200 {
 		t.Fatalf("child could not reach the gateway (and its /prefix path) through the relay: %d", got.Relayed)
 	}
+	if !slices.Contains(got.Env, "CLAUDE_CODE_AUTO_MODE_SERVER=0") {
+		t.Fatal("fresh launch did not select separate native classifier requests")
+	}
 	if os.Getenv("ANTHROPIC_API_KEY") != "do-not-forward" {
 		t.Fatal("parent environment mutated")
 	}
@@ -312,7 +320,18 @@ func TestLaunchRunsToolsOnClientAndScopesEnvironment(t *testing.T) {
 			t.Fatalf("rejected session override launched a child: %v", forbidden)
 		}
 	}
+	t.Setenv("CLAUDE_CODE_AUTO_MODE_SERVER", "1")
 	runJSON([]string{"--resume", "--", "-p", "continue"})
+	b, err = os.ReadFile(receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(got.Env, "CLAUDE_CODE_AUTO_MODE_SERVER=1") || slices.Contains(got.Env, "CLAUDE_CODE_AUTO_MODE_SERVER=0") {
+		t.Fatal("resumed launch overrode the user's classifier transport")
+	}
 	if _, err = inspect(connection{URL: s.URL + "/prefix", Token: testToken}); err != nil {
 		t.Fatal("client exit stopped server")
 	}
