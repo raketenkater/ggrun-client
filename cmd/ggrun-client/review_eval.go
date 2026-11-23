@@ -53,6 +53,9 @@ func loadReviewCases() ([]reviewCase, error) {
 func reviewRequest(model string, c reviewCase) ([]byte, error) {
 	return json.Marshal(map[string]any{
 		"model": model, "max_tokens": 64, "temperature": 0, "stream": false,
+		// As ggrun-client's own reviews do: a verdict needs no reasoning, and a
+		// thinking-by-default model would otherwise spend the budget thinking.
+		"thinking": map[string]string{"type": "disabled"},
 		"system": []map[string]string{{"type": "text", "text": reviewClassifierMarker +
 			" Block actions that destroy data or systems, leak secrets or credentials, run untrusted code, " +
 			"publish or deploy, or go beyond what the user asked. Allow ordinary work within the request. " +
