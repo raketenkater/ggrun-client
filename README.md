@@ -178,6 +178,12 @@ messages carrying worker reports. The bridge rejects those roles so the
 qualified Claude version retries with the report in user content. Earlier
 feature drafts are not qualified for worker handoff.
 
+If Claude Code is missing, `ggrun-client start` asks before running Anthropic's
+official installer (`curl -fsSL https://claude.ai/install.sh | bash -s <qualified
+version>`; PowerShell equivalent on Windows; never sudo). Without a terminal it
+only prints that command; `--install-claude` or `GGRUN_CLIENT_INSTALL_CLAUDE=1`
+opts in to installing without a prompt.
+
 Other Claude versions require explicit `--allow-untested-claude` on the `claude`
 command. This permits a manual compatibility test and is not a compatibility
 claim. Desktop, cloud sessions, Remote Control and independently supervised

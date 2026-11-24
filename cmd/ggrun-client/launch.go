@@ -110,6 +110,7 @@ func transportConflict() error {
 type launchOptions struct {
 	name, resume            string
 	resuming, allowUntested bool
+	installClaude           bool
 	args                    []string
 	localControls           bool
 	controlTimeout          time.Duration
@@ -130,6 +131,8 @@ func launchOptionsFor(args []string) (launchOptions, error) {
 				return o, fmt.Errorf("--connection requires a name")
 			}
 			o.name = args[i]
+		case "--install-claude":
+			o.installClaude = true
 		case "--allow-untested-claude":
 			o.allowUntested = true
 		case "--local-controls", "--tool-review":
@@ -285,6 +288,9 @@ func launch(args []string) error {
 		fmt.Fprintf(os.Stderr, "[ggrun-client] %s: %s, %d tokens; server may fall back to main: %t\n", role.label, target.alias, target.context, target.fallback)
 	}
 	if err = settingsConflict(c, p, o.args); err != nil {
+		return err
+	}
+	if err = ensureClaudeForLaunch(o.installClaude || installClaudeOptIn()); err != nil {
 		return err
 	}
 	path, v, err := claudeExecutable(o.allowUntested)
