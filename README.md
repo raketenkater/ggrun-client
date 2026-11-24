@@ -134,9 +134,14 @@ The launcher supplies the actual context per slot, compaction, aliases, stable
 prompt attribution and local-inference timeout policy. It preserves user hooks,
 MCPs, permission choices and custom status lines. Conflicting saved connection
 settings are diagnosed. With explicit custom `--settings`, configure the
-`ggrun-client workflow-hook` PreToolUse hook for Workflow yourself. Web research
-can use your search MCP or the optional DuckDuckGo MCP when `uvx` is installed
-locally. Permission mode defaults to Auto. The client defaults to separate
+`ggrun-client workflow-hook` PreToolUse hook for Workflow yourself. Privacy
+defaults: Claude Code telemetry, error reporting, nonessential traffic and
+feedback/surveys are disabled (your own environment values win), WebFetch is
+denied (`--allow-webfetch` or `GGRUN_CLIENT_ALLOW_WEBFETCH=1` restores it), and
+the DuckDuckGo search MCP is not injected (`--web-search-mcp` or
+`GGRUN_CLIENT_WEB_SEARCH_MCP=1` opts in; needs `uvx`). Use your own search MCP
+otherwise. The launcher warns when a user or project settings file has a
+PreToolUse hook, which can pre-approve tool calls and bypass Auto-mode review. Permission mode defaults to Auto. The client defaults to separate
 Claude Code classifier requests through ggrun, since local model responses
 have no server-side safeguard verdict. An explicit
 `CLAUDE_CODE_AUTO_MODE_SERVER` setting takes precedence. Main-model safety

@@ -125,6 +125,8 @@ func usage() {
   Optional client controller: claude --goal-only --goal-file GOAL.md
   Optional extra ggrun tool reviewer: --tool-review (--local-controls alias)
   Disable extra ggrun tool reviewer: --no-tool-review
+  Privacy: telemetry/feedback off and WebFetch denied by default; opt in with
+    --allow-webfetch, --web-search-mcp (DuckDuckGo MCP; or GGRUN_CLIENT_ALLOW_WEBFETCH=1, GGRUN_CLIENT_WEB_SEARCH_MCP=1)
   Client goal lifecycle: goal status|clear|resume [--connection default]
   ggrun-client forget [--name default]
 
