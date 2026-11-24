@@ -115,6 +115,8 @@ type launchOptions struct {
 	controlTimeout          time.Duration
 	goalFile                string
 	goalOnly, noToolReview  bool
+	// Privacy opt-ins; see privacy.go.
+	webSearchMCP, allowWebFetch bool
 }
 
 func launchOptionsFor(args []string) (launchOptions, error) {
@@ -134,6 +136,10 @@ func launchOptionsFor(args []string) (launchOptions, error) {
 			o.allowUntested = true
 		case "--local-controls", "--tool-review":
 			o.localControls = true
+		case "--web-search-mcp":
+			o.webSearchMCP = true
+		case "--allow-webfetch":
+			o.allowWebFetch = true
 		case "--goal-only":
 			o.goalOnly = true
 		case "--no-tool-review":
@@ -337,7 +343,7 @@ func launch(args []string) error {
 	if err != nil {
 		return err
 	}
-	childArgs, err := clientArgs(o.args, o.name, p, statePath)
+	childArgs, err := clientArgsWith(o.args, o.name, p, statePath, launchPrivacy(o))
 	if err != nil {
 		return err
 	}
@@ -415,6 +421,8 @@ func launch(args []string) error {
 	// Versions are qualified per release; an in-session auto-update would run
 	// an untested Claude on the next launch.
 	cmd.Env = append(cmd.Env, "DISABLE_AUTOUPDATER=1")
+	cmd.Env = privacyEnv(cmd.Env)
+	warnPreToolUseHooks(os.Stderr)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -445,6 +453,9 @@ func hasFlag(args []string, name string) bool {
 	return false
 }
 func clientArgs(extra []string, name string, p clientkit.Profile, relayState string) ([]string, error) {
+	return clientArgsWith(extra, name, p, relayState, privacyOptionsFromEnv())
+}
+func clientArgsWith(extra []string, name string, p clientkit.Profile, relayState string, priv privacyOptions) ([]string, error) {
 	args := append([]string{}, extra...)
 	if p.Policy.WorkflowHook {
 		args = clientkit.WorkflowPromptArgs(args)
@@ -499,17 +510,21 @@ func clientArgs(extra []string, name string, p clientkit.Profile, relayState str
 	} else {
 		fmt.Fprintln(os.Stderr, "[ggrun-client] custom --settings supplied; keep the Workflow timeout hook configured for long local-model workflows")
 	}
-	if !hasFlag(extra, "--disallowedTools") {
-		args = append([]string{"--disallowedTools", "WebSearch"}, args...)
+	if !hasFlag(extra, "--disallowedTools") && !hasFlag(extra, "--disallowed-tools") {
+		args = append([]string{"--disallowedTools", strings.Join(disallowedTools(priv), ",")}, args...)
+	} else if !priv.allowWebFetch {
+		fmt.Fprintln(os.Stderr, "[ggrun-client] custom --disallowedTools supplied; WebFetch stays enabled unless you list it")
 	}
-	if !hasFlag(extra, "--mcp-config") {
+	if !priv.webSearchMCP {
+		// Off by default: the DuckDuckGo MCP sends queries and fetched URLs to a third party.
+	} else if !hasFlag(extra, "--mcp-config") {
 		if _, err := exec.LookPath("uvx"); err == nil {
-			args = append([]string{"--mcp-config", `{"mcpServers":{"ddg-search":{"command":"uvx","args":["duckduckgo-mcp-server"]}}}`}, args...)
+			args = append([]string{"--mcp-config", ddgMCPConfig}, args...)
 			if !hasFlag(extra, "--allowedTools") && !hasFlag(extra, "--allowed-tools") {
 				args = append([]string{"--allowedTools", "mcp__ddg-search__search,mcp__ddg-search__fetch_content"}, args...)
 			}
 		} else {
-			fmt.Fprintln(os.Stderr, "[ggrun-client] add a search MCP or install uvx on this laptop for web research")
+			fmt.Fprintln(os.Stderr, "[ggrun-client] --web-search-mcp needs uvx installed on this laptop")
 		}
 	}
 	return args, nil
