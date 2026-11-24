@@ -473,6 +473,12 @@ func clientArgs(extra []string, name string, p clientkit.Profile, relayState str
 			hook["shell"] = "powershell"
 		}
 		settings := map[string]any{}
+		if _, configured := os.LookupEnv("CLAUDE_CODE_AUTO_MODE_SERVER"); !configured {
+			// A user settings.json env block is applied after the inherited
+			// environment and would bring back Claude's "auto mode is not
+			// eligible with this gateway" notice; --settings outranks it.
+			settings["env"] = map[string]string{"CLAUDE_CODE_AUTO_MODE_SERVER": "0"}
+		}
 		if p.Policy.WorkflowHook {
 			settings["hooks"] = map[string]any{"PreToolUse": []any{map[string]any{"matcher": "Workflow", "hooks": []any{hook}}}}
 		}
