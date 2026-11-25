@@ -349,6 +349,17 @@ func doctor(args []string) error {
 	if err = settingsConflict(c, p, nil); err != nil {
 		return err
 	}
+	if env, err := claudeEnvironment(p, c.URL, c.Token, nil); err == nil {
+		fmt.Print(compactionLine(env))
+	}
 	fmt.Println("Connection checks passed. Tools run in the current laptop project. Count-tokens, Desktop and cloud sessions are not advertised.")
 	return nil
+}
+
+func compactionLine(env []string) string {
+	at, window := clientkit.CompactionEstimate(env)
+	if window <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("Claude Code compacts at about %d of %d tokens (estimate)\n", at, window)
 }

@@ -7,7 +7,7 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/x/term v0.2.2
-	github.com/raketenkater/ggrun/clientkit v0.0.0-20261113154638-b6cdd22114d8
+	github.com/raketenkater/ggrun/clientkit v0.0.0-20261125090440-df0458dd616c
 	golang.org/x/sys v0.38.0
 )
 
