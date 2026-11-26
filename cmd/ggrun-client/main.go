@@ -135,7 +135,7 @@ Remote cleartext HTTP requires --allow-http. Never put a token in the URL.`)
 }
 
 var (
-	errCredential  = errors.New("the server rejected this token; if it worked before, the server probably has a new gateway token: run ggrun gateway-token there, then update the saved token")
+	errCredential  = errors.New("the server rejected this token (it may have a new gateway token); run ggrun gateway-token there, then update the saved token")
 	errLoading     = errors.New("model is loading or recovering; wait, then retry this command")
 	errUnreachable = errors.New("cannot reach gateway; check server, URL, DNS and network connection")
 )

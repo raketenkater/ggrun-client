@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/raketenkater/ggrun/clientkit"
@@ -214,6 +215,11 @@ func TestTUITokenCheckShowsLoadingThenCompletes(t *testing.T) {
 			t.Fatalf("loading status lacks %q: %q", want, shown[0])
 		}
 	}
+	for _, line := range strings.Split(shown[0], "\n") {
+		if utf8.RuneCountInString(line) > 80 {
+			t.Fatalf("line wider than 80 columns: %q", line)
+		}
+	}
 	if strings.Contains(shown[0], "accepted") {
 		t.Fatalf("a 503 does not accept the token: %q", shown[0])
 	}
@@ -293,9 +299,27 @@ func TestRejectedTokenSaysTheServerMayHaveANewOne(t *testing.T) {
 	s := gatewayFixture(t, strings.Repeat("n", 40), 0) // the server's token changed
 	saveTestConnection(t, "server", s.URL)
 	st := checkServer("server")().(statusMsg).st.status
-	for _, want := range []string{"token rejected", "new token", "ggrun gateway-token", "Update token"} {
+	for _, want := range []string{"token rejected", "new token", "Update token"} {
 		if !strings.Contains(st, want) {
 			t.Fatalf("status lacks %q: %q", want, st)
+		}
+	}
+	// bubbletea cuts lines at the window width, so the hint must fit 80 columns
+	// with the status line's 8-space indent.
+	if n := 8 + utf8.RuneCountInString(st); n > 80 {
+		t.Fatalf("status is %d columns: %q", n, st)
+	}
+	// Pasting a token the server rejects says the same in the TUI.
+	m := newTUIModel()
+	follow(t, m, submitToken(t, m, strings.Repeat("x", 40)))
+	for _, want := range []string{"token rejected", "new gateway token", "ggrun gateway-token"} {
+		if !strings.Contains(m.message, want) {
+			t.Fatalf("rejected-token message lacks %q: %q", want, m.message)
+		}
+	}
+	for _, line := range strings.Split(m.message, "\n") {
+		if utf8.RuneCountInString(line) > 80 {
+			t.Fatalf("line wider than 80 columns: %q", line)
 		}
 	}
 	_, err := inspect(connection{Version: 1, URL: s.URL, Token: testToken})

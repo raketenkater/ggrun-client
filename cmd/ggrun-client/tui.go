@@ -227,7 +227,7 @@ func checkServer(name string) tea.Cmd {
 		case errors.Is(err, errLoading):
 			st.status = "loading model…"
 		case errors.Is(err, errCredential):
-			st.status = "token rejected — the server may have a new token: run ggrun gateway-token there, then choose Update token"
+			st.status = "token rejected (server may have a new token) — choose Update token"
 		case errors.Is(err, errUnreachable):
 			st.status = "unreachable — is the server running / on your VPN?"
 		default:
@@ -348,7 +348,7 @@ func (m *tuiModel) rebuild() {
 		})
 		add("New session in "+tildePath(m.cwd), func(m *tuiModel) tea.Cmd {
 			if !m.server().ok {
-				m.message = "Server is not ready: " + m.server().status
+				m.message = "Server is not ready:\n" + m.server().status
 				return nil
 			}
 			return m.startAction(tuiAction{kind: "launch", args: m.launchArgs(conn, false)})
@@ -491,7 +491,7 @@ func (m *tuiModel) submit(value string) tea.Cmd {
 			m.message = "Not saved: gateway token must be 32–4096 characters on one line"
 			return nil
 		}
-		return m.startWait(name, "Connecting "+url+" (waits while the model loads)…", "the server has not been checked and nothing is saved yet", func(ctx context.Context, onLoading func(time.Duration)) error {
+		return m.startWait(name, "Connecting "+url+" (waits while the model loads)…", "The server has not been checked and nothing is saved yet", func(ctx context.Context, onLoading func(time.Duration)) error {
 			c := connection{Version: 1, URL: url, Token: value}
 			p, err := waitReady(ctx, c, onLoading)
 			if err == nil {
@@ -510,7 +510,7 @@ func (m *tuiModel) submit(value string) tea.Cmd {
 			return nil
 		}
 		name := s.name
-		return m.startWait(name, "Checking the new token…", "the token has not been checked or saved yet", func(ctx context.Context, onLoading func(time.Duration)) error {
+		return m.startWait(name, "Checking the new token…", "The token has not been checked or saved yet", func(ctx context.Context, onLoading func(time.Duration)) error {
 			c, err := load(name)
 			if err == nil {
 				_, err = updateTokenContext(ctx, name, c, value, onLoading)
@@ -547,7 +547,7 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.job != m.job {
 			return m, nil
 		}
-		m.message = fmt.Sprintf("Server is still loading the model (%s so far); %s. Esc to cancel.", msg.waited.Round(time.Second), msg.job.unsaved)
+		m.message = fmt.Sprintf("Server is still loading the model (%s so far).\n%s. Esc to cancel.", msg.waited.Round(time.Second), msg.job.unsaved)
 		return m, msg.job.listen()
 	case connectedMsg:
 		if msg.job != nil {
@@ -555,6 +555,10 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.cancelWait() // releases the job's context
+		}
+		if errors.Is(msg.err, errCredential) {
+			m.message = "Not saved: token rejected by the server.\nIt may have a new gateway token: run ggrun gateway-token there."
+			return m, nil
 		}
 		if msg.err != nil {
 			m.message = "Not saved: " + msg.err.Error()
