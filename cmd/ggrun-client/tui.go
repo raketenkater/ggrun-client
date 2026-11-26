@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -130,6 +131,7 @@ type tuiModel struct {
 	message  string
 	action   tuiAction
 	width    int
+	job      *waitJob // running token or add-server check
 }
 
 type statusMsg struct {
@@ -144,6 +146,69 @@ type recheckMsg struct{ name string }
 type connectedMsg struct {
 	name string
 	err  error
+	job  *waitJob // nil unless the result of a cancellable check
+}
+
+// waitJob is a token or add-server check that may wait while the model loads.
+// Its goroutine reports progress and the result on ch; cancel stops it.
+type waitJob struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	ch     chan tea.Msg
+	// unsaved says what is still undone while the server loads.
+	unsaved string
+}
+
+type loadingMsg struct {
+	job    *waitJob
+	waited time.Duration
+}
+
+// listen returns the job's next message; nil once the job is cancelled.
+func (j *waitJob) listen() tea.Cmd {
+	return func() tea.Msg {
+		if j.ctx.Err() != nil {
+			return nil
+		}
+		select {
+		case msg := <-j.ch:
+			return msg
+		case <-j.ctx.Done():
+			return nil
+		}
+	}
+}
+
+// startWait runs a check that may wait for a loading model and keeps the UI
+// updated; Esc cancels it. A newer check replaces an older one.
+func (m *tuiModel) startWait(name, start, unsaved string, run func(ctx context.Context, onLoading func(time.Duration)) error) tea.Cmd {
+	m.cancelWait()
+	ctx, cancel := context.WithCancel(context.Background())
+	j := &waitJob{ctx: ctx, cancel: cancel, ch: make(chan tea.Msg, 8), unsaved: unsaved}
+	m.job, m.message = j, start
+	go func() {
+		err := run(ctx, func(w time.Duration) {
+			select {
+			case j.ch <- loadingMsg{j, w}:
+			default: // the screen is behind; the next retry reports again
+			}
+		})
+		select {
+		case j.ch <- connectedMsg{name, err, j}:
+		case <-ctx.Done():
+		}
+	}()
+	return j.listen()
+}
+
+// cancelWait stops a running check; true if there was one.
+func (m *tuiModel) cancelWait() bool {
+	if m.job == nil {
+		return false
+	}
+	m.job.cancel()
+	m.job = nil
+	return true
 }
 
 func checkServer(name string) tea.Cmd {
@@ -162,7 +227,7 @@ func checkServer(name string) tea.Cmd {
 		case errors.Is(err, errLoading):
 			st.status = "loading model…"
 		case errors.Is(err, errCredential):
-			st.status = "token rejected — choose Update token"
+			st.status = "token rejected — the server may have a new token: run ggrun gateway-token there, then choose Update token"
 		case errors.Is(err, errUnreachable):
 			st.status = "unreachable — is the server running / on your VPN?"
 		default:
@@ -422,41 +487,39 @@ func (m *tuiModel) submit(value string) tea.Cmd {
 			name = fmt.Sprintf("server%d", i)
 		}
 		url := m.pending
-		m.message = "Connecting " + url + " (waits while the model loads)…"
-		return func() tea.Msg {
+		if len(value) < 32 || len(value) > 4096 || strings.ContainsAny(value, "\r\n\x00") {
+			m.message = "Not saved: gateway token must be 32–4096 characters on one line"
+			return nil
+		}
+		return m.startWait(name, "Connecting "+url+" (waits while the model loads)…", "the server has not been checked and nothing is saved yet", func(ctx context.Context, onLoading func(time.Duration)) error {
 			c := connection{Version: 1, URL: url, Token: value}
-			if len(value) < 32 || len(value) > 4096 || strings.ContainsAny(value, "\r\n\x00") {
-				return connectedMsg{name, fmt.Errorf("gateway token must be 32–4096 characters on one line")}
+			p, err := waitReady(ctx, c, onLoading)
+			if err == nil {
+				err = ctx.Err()
 			}
-			p, err := guidedReady(c, nopWriter{})
 			if err != nil {
-				return connectedMsg{name, err}
+				return err
 			}
 			c.Profile = p
 			b, _ := json.Marshal(c)
-			return connectedMsg{name, clientkit.WritePrivate(mustConnectionPath(name), b)}
-		}
+			return clientkit.WritePrivate(mustConnectionPath(name), b)
+		})
 	case "token":
 		s := m.server()
 		if s == nil {
 			return nil
 		}
 		name := s.name
-		m.message = "Checking the new token…"
-		return func() tea.Msg {
+		return m.startWait(name, "Checking the new token…", "the token has not been checked or saved yet", func(ctx context.Context, onLoading func(time.Duration)) error {
 			c, err := load(name)
 			if err == nil {
-				_, err = updateToken(name, c, value)
+				_, err = updateTokenContext(ctx, name, c, value, onLoading)
 			}
-			return connectedMsg{name, err}
-		}
+			return err
+		})
 	}
 	return nil
 }
-
-type nopWriter struct{}
-
-func (nopWriter) Write(b []byte) (int, error) { return len(b), nil }
 
 func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -480,7 +543,19 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case recheckMsg:
 		return m, checkServer(msg.name)
+	case loadingMsg:
+		if msg.job != m.job {
+			return m, nil
+		}
+		m.message = fmt.Sprintf("Server is still loading the model (%s so far); %s. Esc to cancel.", msg.waited.Round(time.Second), msg.job.unsaved)
+		return m, msg.job.listen()
 	case connectedMsg:
+		if msg.job != nil {
+			if msg.job != m.job {
+				return m, nil
+			}
+			m.cancelWait() // releases the job's context
+		}
 		if msg.err != nil {
 			m.message = "Not saved: " + msg.err.Error()
 			return m, nil
@@ -512,6 +587,10 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		switch msg.String() {
+		case "esc":
+			if m.cancelWait() {
+				m.message = "Cancelled; nothing was saved."
+			}
 		case "ctrl+c", "q":
 			m.action = tuiAction{kind: "quit"}
 			return m, tea.Quit
@@ -610,7 +689,9 @@ func runTUI() error {
 		if err != nil {
 			return err
 		}
-		a := final.(*tuiModel).action
+		fm := final.(*tuiModel)
+		fm.cancelWait() // a pending check must not save once Claude is running
+		a := fm.action
 		switch a.kind {
 		case "launch":
 			start, _ := os.Getwd()
