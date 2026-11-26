@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -100,7 +101,7 @@ func guidedStart(in *bufio.Reader, out io.Writer) error {
 		if terr != nil {
 			return terr
 		}
-		if c, err = updateToken(name, c, token); err != nil {
+		if c, err = updateToken(name, c, token, out); err != nil {
 			return err
 		}
 		p, err = guidedReady(c, out)
@@ -166,25 +167,45 @@ func guidedStart(in *bufio.Reader, out io.Writer) error {
 // guidedReady waits for a loading model instead of failing; other errors
 // return immediately.
 func guidedReady(c connection, out io.Writer) (clientkit.Profile, error) {
-	deadline := time.Now().Add(loadingLimit)
 	announced := false
-	for {
-		p, err := inspect(c)
-		if !errors.Is(err, errLoading) {
-			if announced {
-				fmt.Fprintln(out)
-			}
-			return p, err
-		}
-		if time.Now().After(deadline) {
-			return p, fmt.Errorf("server still loading after %s", loadingLimit)
-		}
+	p, err := waitReady(context.Background(), c, func(time.Duration) {
 		if !announced {
 			fmt.Fprint(out, "Server is loading the model; waiting (Ctrl+C to stop)")
 			announced = true
 		}
 		fmt.Fprint(out, ".")
-		time.Sleep(loadingRetry)
+	})
+	if announced {
+		fmt.Fprintln(out)
+	}
+	return p, err
+}
+
+// waitReady polls a loading server (HTTP 503) every loadingRetry for at most
+// loadingLimit. A 503 comes before authentication, so it says nothing about
+// the token. onLoading, when set, runs after each 503 with the time waited so
+// far. Cancelling ctx stops the wait and returns ctx.Err().
+func waitReady(ctx context.Context, c connection, onLoading func(waited time.Duration)) (clientkit.Profile, error) {
+	start, retry, limit := time.Now(), loadingRetry, loadingLimit
+	deadline := start.Add(limit)
+	for {
+		p, err := inspectContext(ctx, c)
+		if !errors.Is(err, errLoading) {
+			return p, err
+		}
+		if time.Now().After(deadline) {
+			return p, fmt.Errorf("server still loading after %s", limit)
+		}
+		if onLoading != nil {
+			onLoading(time.Since(start))
+		}
+		t := time.NewTimer(retry)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return p, ctx.Err()
+		case <-t.C:
+		}
 	}
 }
 
@@ -216,13 +237,34 @@ func guidedConnect(ask func(string, string) string, out io.Writer, name, defURL 
 	return name, nil
 }
 
-func updateToken(name string, c connection, token string) (connection, error) {
+func updateToken(name string, c connection, token string, out io.Writer) (connection, error) {
+	announced := false
+	c, err := updateTokenContext(context.Background(), name, c, token, func(time.Duration) {
+		if !announced {
+			fmt.Fprint(out, "Server is loading the model; the token is checked when it is ready (Ctrl+C to stop)")
+			announced = true
+		}
+		fmt.Fprint(out, ".")
+	})
+	if announced {
+		fmt.Fprintln(out)
+	}
+	return c, err
+}
+
+// updateTokenContext checks the new token against a ready server and only then
+// saves it. While the server loads, onLoading reports the wait; cancelling ctx
+// stops without saving.
+func updateTokenContext(ctx context.Context, name string, c connection, token string, onLoading func(time.Duration)) (connection, error) {
 	if len(token) < 32 || len(token) > 4096 || strings.ContainsAny(token, "\r\n\x00") {
 		return c, fmt.Errorf("gateway token must be 32–4096 characters on one line")
 	}
 	c.Token = token
-	p, err := guidedReady(c, io.Discard)
+	p, err := waitReady(ctx, c, onLoading)
 	if err != nil {
+		return c, err
+	}
+	if err = ctx.Err(); err != nil {
 		return c, err
 	}
 	c.Profile = p
