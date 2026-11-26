@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -26,6 +27,9 @@ var (
 		return strings.TrimSpace(string(b)), err
 	}
 	installClaude = func(version string) error {
+		if _, ok := findClaude(); !ok {
+			return runClaudeInstaller(runtime.GOOS, version, os.Stderr)
+		}
 		cmd := exec.Command("claude", "install", version)
 		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 		return cmd.Run()
@@ -124,6 +128,12 @@ func guidedStart(in *bufio.Reader, out io.Writer) error {
 	}
 	fmt.Fprintf(out, "Server ready: %s, %d tokens of context.\n", p.ModelName, p.ContextPerSlot)
 
+	if err = ensureClaude(out, func(q string) bool {
+		a := strings.ToLower(ask(q+" (y/N)", "N"))
+		return a == "y" || a == "yes"
+	}, installClaudeOptIn()); err != nil {
+		return err
+	}
 	if _, v, verr := claudeExecutable(false); verr != nil || !claudeAtLeast(v, controlsClaudeVersion) {
 		if _, lookErr := exec.LookPath("claude"); lookErr != nil {
 			return fmt.Errorf("Claude Code is not installed; install it from https://code.claude.com/docs/en/setup, then run ggrun-client again")
