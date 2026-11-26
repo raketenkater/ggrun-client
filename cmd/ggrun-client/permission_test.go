@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 )
@@ -62,4 +64,44 @@ func TestPermissionOverridesRemainAuthoritativeWithoutWorker(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Claude's "not eligible with this gateway" Auto-mode notice is suppressed by
+// CLAUDE_CODE_AUTO_MODE_SERVER=0. A user settings.json env block would undo the
+// inherited variable, so the client also passes it through --settings, which
+// outranks user settings. An explicit process setting is left alone.
+func TestClientArgsPinsAutoModeServerThroughSettings(t *testing.T) {
+	settingsEnv := func(t *testing.T) map[string]string {
+		t.Helper()
+		args, err := clientArgs(nil, "default", profile(), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, a := range args {
+			if a == "--settings" && i+1 < len(args) {
+				var doc struct {
+					Env map[string]string `json:"env"`
+				}
+				if err := json.Unmarshal([]byte(args[i+1]), &doc); err != nil {
+					t.Fatal(err)
+				}
+				return doc.Env
+			}
+		}
+		t.Fatal("no --settings generated")
+		return nil
+	}
+	t.Run("unset", func(t *testing.T) {
+		t.Setenv("CLAUDE_CODE_AUTO_MODE_SERVER", "")
+		os.Unsetenv("CLAUDE_CODE_AUTO_MODE_SERVER")
+		if got := settingsEnv(t)["CLAUDE_CODE_AUTO_MODE_SERVER"]; got != "0" {
+			t.Fatalf("settings env = %q, want 0", got)
+		}
+	})
+	t.Run("explicit user choice", func(t *testing.T) {
+		t.Setenv("CLAUDE_CODE_AUTO_MODE_SERVER", "1")
+		if got, ok := settingsEnv(t)["CLAUDE_CODE_AUTO_MODE_SERVER"]; ok {
+			t.Fatalf("overrode the user's explicit setting with %q", got)
+		}
+	})
 }
