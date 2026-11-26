@@ -408,8 +408,7 @@ func launch(args []string) error {
 	// about a minute and fails the request so Claude retries on a new
 	// connection. Unknown queue/prefill silence stays unbounded by default;
 	// identified generation has a separate semantic-progress idle budget.
-	cmd.Env = withLoopbackNoProxy(p.Environment(rl.URL(), c.Token, os.Environ()))
-	cmd.Env, err = applyWorkflowSettingsCapacity(cmd.Env, p, o.args)
+	cmd.Env, err = claudeEnvironment(p, rl.URL(), c.Token, o.args)
 	if err != nil {
 		return err
 	}
@@ -587,4 +586,10 @@ func workflowHook(in io.Reader, out io.Writer) error {
 		result["updatedInput"] = input.ToolInput
 	}
 	return json.NewEncoder(out).Encode(map[string]any{"hookSpecificOutput": result})
+}
+
+// claudeEnvironment is the environment Claude Code starts with, before the
+// launch-only additions. doctor uses it too so its estimate matches a launch.
+func claudeEnvironment(p clientkit.Profile, url, token string, args []string) ([]string, error) {
+	return applyWorkflowSettingsCapacity(withLoopbackNoProxy(p.Environment(url, token, os.Environ())), p, args)
 }
