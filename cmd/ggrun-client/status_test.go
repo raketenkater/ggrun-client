@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -58,5 +59,21 @@ func TestStatusLineSeparatesSlowLostAndUnreachable(t *testing.T) {
 				t.Errorf("%s: %q contains %q", tc.name, got, u)
 			}
 		}
+	}
+}
+
+// ggrun review W7: the router fallback line shows the expected wait only when
+// the server reports one.
+func TestStatusLineShowsExpectedWaitWhenKnown(t *testing.T) {
+	now := time.Now()
+	if got := statusLine(nil, &routerStatus{Active: 1, Limit: 1, Queued: 2, ExpectedWaitMS: 75000}, nil, nil, now, ""); !strings.Contains(got, "queued 2 (~1m15s wait)") {
+		t.Fatalf("status %q", got)
+	}
+	if got := statusLine(nil, &routerStatus{Active: 1, Limit: 1, Queued: 2}, nil, nil, now, ""); strings.Contains(got, "wait") {
+		t.Fatalf("estimate invented: %q", got)
+	}
+	var rt routerStatus
+	if err := json.Unmarshal([]byte(`{"active":1,"queued":3,"limit":1,"expected_wait_ms":9000}`), &rt); err != nil || rt.ExpectedWaitMS != 9000 || rt.Queued != 3 {
+		t.Fatalf("decode %+v %v", rt, err)
 	}
 }

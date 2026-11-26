@@ -391,6 +391,41 @@ func TestGgoalRequiresControlsSession(t *testing.T) {
 	}
 }
 
+func TestGgoalStatusIsBoundToTheLaunch(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.goal")
+	goal := goalRecord{
+		Version: 1, Session: "session", RunID: "launch", Model: "model",
+		State: "active", Condition: "saved condition", Reason: "last check", Revision: "1",
+	}
+	if err := writeGoal(path, goal); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		prompt, session, launch, want string
+	}{
+		{"ordinary prompt", "session", "launch", "{}"},
+		{"/ggoal status", "session", "launch", "saved condition"},
+		{"/ggrun:ggoal", "session", "launch", "Last check: last check"},
+		{"/ggoal status", "session", "stale", "No ggrun goal is set for this launch"},
+		{"/ggoal status", "other", "launch", "No ggrun goal is set for this launch"},
+		{"/ggoal clear", "session", "launch", "Use /ggoal status"},
+	} {
+		var out bytes.Buffer
+		err := localControlHook("fixture", time.Minute, path, strings.NewReader(ggoalEvent(tc.prompt, tc.session, "auto")), &out, tc.launch)
+		if err != nil || !strings.Contains(out.String(), tc.want) {
+			t.Errorf("%s: got %s (%v), want %q", tc.prompt, out.String(), err, tc.want)
+		}
+		if tc.session != goal.Session || tc.launch != goal.RunID {
+			if strings.Contains(out.String(), goal.Condition) {
+				t.Errorf("status disclosed a goal from another launch: %s", out.String())
+			}
+		}
+	}
+	if got, err := readGoal(path); err != nil || got != goal {
+		t.Fatalf("status commands changed the goal: %+v (%v)", got, err)
+	}
+}
+
 // Setting a new goal while a Stop check is running must keep the session
 // working on the new goal instead of ending the turn unevaluated.
 func TestGoalReplacedDuringCheckContinuesWithNewGoal(t *testing.T) {

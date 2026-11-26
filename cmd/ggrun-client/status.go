@@ -20,7 +20,12 @@ type serverProgress struct {
 	} `json:"progress"`
 }
 
-type routerStatus struct{ Active, Queued, Limit int }
+type routerStatus struct {
+	Active, Queued, Limit int
+	// ExpectedWaitMS is the server's estimate for the last queued request;
+	// servers before ggrun#144 omit it and it stays 0 (unknown).
+	ExpectedWaitMS int64 `json:"expected_wait_ms"`
+}
 
 // Waiting this long for response headers while the server reports no request
 // at all means the request is lost between the two machines.
@@ -120,7 +125,11 @@ func statusLine(sp *serverProgress, rt *routerStatus, reqErr error, rs *relaySta
 		line = strings.Replace(line, "ggrun · local ", "ggrun · server ", 1)
 		parts = append(parts, line)
 	case rt != nil:
-		parts = append(parts, fmt.Sprintf("ggrun · active %d/%d · queued %d", rt.Active, rt.Limit, rt.Queued))
+		line := fmt.Sprintf("ggrun · active %d/%d · queued %d", rt.Active, rt.Limit, rt.Queued)
+		if rt.Queued > 0 && rt.ExpectedWaitMS > 0 {
+			line += " (~" + short(time.Duration(rt.ExpectedWaitMS)*time.Millisecond) + " wait)"
+		}
+		parts = append(parts, line)
 	default:
 		parts = append(parts, "ggrun · connected")
 	}

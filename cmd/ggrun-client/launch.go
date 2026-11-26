@@ -349,10 +349,19 @@ func launch(args []string) error {
 		fmt.Fprintln(os.Stderr, "[ggrun-client] Optional extra ggrun tool review enabled.")
 	}
 	if o.goalFile != "" {
-		childArgs, err = configuredControlArgs(childArgs, o.name, o.controlTimeout, []string{"Stop", "StopFailure"}, s.RunID)
+		childArgs, err = configuredControlArgs(childArgs, o.name, o.controlTimeout, []string{"Stop", "StopFailure", "UserPromptSubmit"}, s.RunID)
 		if err != nil {
 			return err
 		}
+		pluginDir, err := os.MkdirTemp(filepath.Dir(sessionFile), "goal-command-")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(pluginDir)
+		if err = writeControlPlugin(pluginDir); err != nil {
+			return err
+		}
+		childArgs = append([]string{"--plugin-dir", pluginDir}, childArgs...)
 		fmt.Fprintln(os.Stderr, "[ggrun-client] Client goal controller enabled; do not also activate native /goal. Extra ggrun tool review:", o.localControls)
 	}
 	if o.resuming {
@@ -397,6 +406,11 @@ func launch(args []string) error {
 	cmd.Env, err = applyWorkflowSettingsCapacity(cmd.Env, p, o.args)
 	if err != nil {
 		return err
+	}
+	// ggrun routes separate Claude Code classifier requests. Local model
+	// responses do not carry the Anthropic server-side safeguard verdict.
+	if _, configured := os.LookupEnv("CLAUDE_CODE_AUTO_MODE_SERVER"); !configured {
+		cmd.Env = append(cmd.Env, "CLAUDE_CODE_AUTO_MODE_SERVER=0")
 	}
 	// Versions are qualified per release; an in-session auto-update would run
 	// an untested Claude on the next launch.

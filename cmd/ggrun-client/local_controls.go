@@ -261,7 +261,7 @@ func localControlHook(name string, timeout time.Duration, statePath string, in i
 		}
 	}
 	if input.Event == "UserPromptSubmit" {
-		return goalPromptHook(name, statePath, input, out)
+		return goalPromptHook(statePath, input, out, firstRunID(runIDs))
 	}
 	if input.Mode == "" {
 		return fmt.Errorf("native control event omitted its permission mode")
@@ -472,22 +472,18 @@ func localGoalHook(name string, timeout time.Duration, path string, input review
 	return json.NewEncoder(out).Encode(map[string]any{})
 }
 
-// The /ggoal skill only gives the command a name; the UserPromptSubmit hook
-// sees the raw prompt and records the goal in Go, never through a shell.
+// The session's UserPromptSubmit hook answers status commands locally.
 const ggoalSkill = `---
 name: ggoal
-description: Set, check, resume or clear the ggrun-client persistent goal (checked by the main model, no 30-second deadline)
-argument-hint: "[condition | status | resume | clear]"
+description: Show the ggrun-client goal status for this session
+argument-hint: "[status]"
 disable-model-invocation: true
 ---
-The ggrun-client goal controller has already handled this /ggoal command; its
-result is in the UserPromptSubmit hook context. If a goal is active, work toward
-its condition now and keep going until it is fully satisfied, proving it with
-real tool results. After each turn the main model checks the condition and the
-session continues while it is unmet. Do not edit ggrun-client goal state yourself.
+Goal status is reported by ggrun-client's UserPromptSubmit hook. If it did not
+report a status, tell the user to run ggrun-client goal status in this project.
 `
 
-func goalPromptHook(name, statePath string, input reviewInput, out io.Writer) error {
+func goalPromptHook(statePath string, input reviewInput, out io.Writer, runID string) error {
 	text := strings.TrimSpace(input.Prompt)
 	rest, matched := "", false
 	for _, prefix := range []string{"/ggrun:ggoal", "/ggoal"} {
@@ -511,14 +507,23 @@ func goalPromptHook(name, statePath string, input reviewInput, out io.Writer) er
 		note = "\nGoal checks run only in Auto mode; switch back to Auto for them to run."
 	}
 	cmd := strings.ToLower(rest)
+	if runID != "" && cmd != "" && cmd != "status" {
+		return block("Use /ggoal status to check the client goal. Use ggrun-client goal clear or resume to change its state.")
+	}
 	switch cmd {
 	case "", "status":
 		g, e := readGoal(statePath)
 		if os.IsNotExist(e) {
+			if runID != "" {
+				return block("No ggrun goal is set for this launch.")
+			}
 			return block("No ggrun goal is set. Use /ggoal <condition>.")
 		}
 		if e != nil {
 			return e
+		}
+		if runID != "" && (g.RunID != runID || g.Session != input.Session) {
+			return block("No ggrun goal is set for this launch.")
 		}
 		msg := "ggrun goal " + g.State + ": " + g.Condition
 		if g.Reason != "" {

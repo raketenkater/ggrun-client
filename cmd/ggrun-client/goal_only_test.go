@@ -35,11 +35,20 @@ func TestGoalOnlyLaunchBindsWithoutToolReview(t *testing.T) {
 		b, _ := os.ReadFile(receipt)
 		var child struct{ Args []string }
 		json.Unmarshal(b, &child)
-		var settingsPath string
+		var settingsPath, pluginDir string
 		for i, a := range child.Args {
-			if a == "--settings" {
+			switch a {
+			case "--settings":
 				settingsPath = child.Args[i+1]
+			case "--plugin-dir":
+				pluginDir = child.Args[i+1]
 			}
+		}
+		if pluginDir == "" {
+			t.Fatal("goal launch omitted the session's status command")
+		}
+		if _, err := os.Stat(pluginDir); !os.IsNotExist(err) {
+			t.Fatalf("status command directory was not removed after launch: %v", err)
 		}
 		b, err := os.ReadFile(settingsPath)
 		if err != nil {
@@ -60,6 +69,9 @@ func TestGoalOnlyLaunchBindsWithoutToolReview(t *testing.T) {
 		}
 		if len(settings.Hooks["StopFailure"]) != 1 || !strings.Contains(settings.Hooks["Stop"][0].Hooks[0].Command, "--run-id") {
 			t.Fatal("goal hooks do not track failures and launch ownership")
+		}
+		if hooks := settings.Hooks["UserPromptSubmit"]; len(hooks) != 1 || !strings.Contains(hooks[0].Hooks[0].Command, "--run-id") {
+			t.Fatal("status hook does not track launch ownership")
 		}
 		for _, h := range settings.Hooks["PreToolUse"] {
 			if h.Matcher == ".*" {

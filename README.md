@@ -136,9 +136,13 @@ MCPs, permission choices and custom status lines. Conflicting saved connection
 settings are diagnosed. With explicit custom `--settings`, configure the
 `ggrun-client workflow-hook` PreToolUse hook for Workflow yourself. Web research
 can use your search MCP or the optional DuckDuckGo MCP when `uvx` is installed
-locally. Permission mode defaults to Auto. Main-model safety checks can exceed
-Claude's separate classifier deadline, even with a long API timeout; autonomous
-serving needs a reviewer that completes these checks within that deadline.
+locally. Permission mode defaults to Auto. The client defaults to separate
+Claude Code classifier requests through ggrun, since local model responses
+have no server-side safeguard verdict. An explicit
+`CLAUDE_CODE_AUTO_MODE_SERVER` setting takes precedence. Main-model safety
+checks can exceed Claude's separate classifier deadline even with a long API
+timeout, so autonomous serving needs a reviewer that completes those checks
+within that deadline.
 Use an explicit Claude `--permission-mode` or
 `GGRUN_CLAUDE_PERMISSION_MODE=inherit` to retain another
 choice.
@@ -230,8 +234,8 @@ extra reviewer even when the legacy `--local-controls` flag is supplied.
 Native permissions, user hooks and deny/ask rules remain effective.
 
 The client controller installs a Stop evaluator and a StopFailure notification
-hook; it does not install `/ggoal` or a
-UserPromptSubmit hook. Do not also activate native `/goal` in that session.
+hook. Use `/ggoal status` in that session to see the condition and the last
+evaluation. Do not also activate native `/goal` in that session.
 From the same project directory, `ggrun-client goal status`, `goal clear` and
 `goal resume` manage the client condition. Resume requires the same verified
 running session with the client hook; a new launch with `--goal-file` explicitly binds
