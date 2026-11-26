@@ -218,7 +218,7 @@ func (r *relay) persist() {
 		return
 	}
 	tmp := r.path + ".tmp"
-	if os.WriteFile(tmp, b, 0o600) == nil && os.Rename(tmp, r.path) != nil {
+	if os.WriteFile(tmp, b, 0o600) == nil && retryTransientFS(func() error { return os.Rename(tmp, r.path) }) != nil {
 		_ = os.Remove(tmp)
 	}
 }
@@ -404,7 +404,8 @@ func (r *relay) expire(q *relayRequest, now time.Time, cancel context.CancelCaus
 
 func readRelayState(path string) (relayState, error) {
 	var s relayState
-	b, err := os.ReadFile(path)
+	var b []byte
+	err := retryTransientFS(func() (e error) { b, e = os.ReadFile(path); return })
 	if err != nil {
 		return s, err
 	}
