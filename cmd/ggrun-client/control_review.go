@@ -278,7 +278,7 @@ func parseControlVerdict(b []byte) (reviewVerdict, error) {
 	return verdict, nil
 }
 
-func mainReviewHook(name string, timeout time.Duration, in io.Reader, out io.Writer) error {
+func mainReviewHook(name string, timeout time.Duration, in io.Reader, out io.Writer, sessionFiles ...string) error {
 	if timeout < time.Second || timeout > 24*time.Hour {
 		return fmt.Errorf("review timeout must be between 1s and 24h")
 	}
@@ -319,6 +319,11 @@ func mainReviewHook(name string, timeout time.Duration, in io.Reader, out io.Wri
 	sessionFile, err := sessionPathForDir(name, input.CWD)
 	if err != nil {
 		return err
+	}
+	if len(sessionFiles) > 0 && sessionFiles[0] != "" {
+		// Registered hooks bind the original launch record explicitly. Native
+		// cwd can change after cd or a worktree switch; it is not the session key.
+		sessionFile = sessionFiles[0]
 	}
 	if _, err := resumedSession(sessionFile, input.Session, p); err != nil {
 		return fmt.Errorf("review session validation: %w", err)

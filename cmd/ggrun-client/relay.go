@@ -76,16 +76,17 @@ type relayState struct {
 }
 
 type relay struct {
-	mu       sync.Mutex
-	state    relayState
-	next     int
-	active   map[int]*relayRequest
-	path     string
-	dirty    chan struct{}
-	server   *http.Server
-	listener net.Listener
-	done     chan struct{}
-	policy   relayPolicy
+	mu        sync.Mutex
+	persistMu sync.Mutex
+	state     relayState
+	next      int
+	active    map[int]*relayRequest
+	path      string
+	dirty     chan struct{}
+	server    *http.Server
+	listener  net.Listener
+	done      chan struct{}
+	policy    relayPolicy
 }
 
 func relayStatePath(name string) (string, error) {
@@ -201,6 +202,11 @@ func (r *relay) snapshot() relayState {
 }
 
 func (r *relay) persist() {
+	// Serialize the snapshot and replacement together. Two writers sharing
+	// the temporary pathname could otherwise truncate each other's snapshot or
+	// publish older in-flight state after a completed/failed request.
+	r.persistMu.Lock()
+	defer r.persistMu.Unlock()
 	if r.path == "" {
 		return
 	}
@@ -212,7 +218,7 @@ func (r *relay) persist() {
 		return
 	}
 	tmp := r.path + ".tmp"
-	if os.WriteFile(tmp, b, 0o600) == nil && os.Rename(tmp, r.path) != nil {
+	if os.WriteFile(tmp, b, 0o600) == nil && retryTransientFS(func() error { return os.Rename(tmp, r.path) }) != nil {
 		_ = os.Remove(tmp)
 	}
 }
@@ -398,7 +404,8 @@ func (r *relay) expire(q *relayRequest, now time.Time, cancel context.CancelCaus
 
 func readRelayState(path string) (relayState, error) {
 	var s relayState
-	b, err := os.ReadFile(path)
+	var b []byte
+	err := retryTransientFS(func() (e error) { b, e = os.ReadFile(path); return })
 	if err != nil {
 		return s, err
 	}
